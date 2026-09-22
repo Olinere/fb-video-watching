@@ -1,0 +1,25 @@
+# Virtual environment
+.fbwenv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+.pytest_cache/
+build/
+dist/
+
+# Config & local data
+.fb-video-watcher/
+history.db
+cookies.txt
+settings.json
+
+# IDE & OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db

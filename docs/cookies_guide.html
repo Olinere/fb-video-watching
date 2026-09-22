@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hướng dẫn xuất & cài đặt Cookies (cookies.txt) - FB Video Watcher</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --surface: #1e293b;
+            --surface-card: #24344d;
+            --surface-hover: #334155;
+            --primary: #38bdf8;
+            --primary-gradient: linear-gradient(135deg, #38bdf8 0%, #818cf8 100%);
+            --accent: #0284c7;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --text-dim: #64748b;
+            --border: #334155;
+            --success: #34d399;
+            --warning: #fbbf24;
+            --danger: #f87171;
+            --radius-lg: 16px;
+            --radius-md: 10px;
+            --radius-sm: 6px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text-main);
+            line-height: 1.6;
+            padding: 2rem 1rem;
+        }
+
+        .container {
+            max-width: 860px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 2.5rem;
+            padding-bottom: 2rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .badge-app {
+            display: inline-block;
+            background: rgba(56, 189, 248, 0.12);
+            color: var(--primary);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            font-size: 0.85rem;
+            font-weight: 600;
+            padding: 4px 14px;
+            border-radius: 9999px;
+            margin-bottom: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        h1 {
+            font-size: 2.2rem;
+            font-weight: 700;
+            background: var(--primary-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.8rem;
+        }
+
+        .subtitle {
+            color: var(--text-muted);
+            font-size: 1.05rem;
+            max-width: 650px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 1.8rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 1.2rem;
+        }
+
+        .card-icon {
+            font-size: 1.5rem;
+            background: rgba(56, 189, 248, 0.15);
+            width: 44px;
+            height: 44px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: var(--radius-md);
+            color: var(--primary);
+        }
+
+        h2 {
+            font-size: 1.35rem;
+            color: var(--text-main);
+            font-weight: 600;
+        }
+
+        p {
+            color: var(--text-muted);
+            margin-bottom: 1rem;
+            font-size: 0.98rem;
+        }
+
+        .alert-box {
+            border-radius: var(--radius-md);
+            padding: 1rem 1.2rem;
+            margin: 1.2rem 0;
+            display: flex;
+            gap: 14px;
+            align-items: flex-start;
+        }
+
+        .alert-warning {
+            background: rgba(251, 191, 36, 0.1);
+            border: 1px solid rgba(251, 191, 36, 0.3);
+            color: #fef08a;
+        }
+
+        .alert-info {
+            background: rgba(56, 189, 248, 0.1);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            color: #bae6fd;
+        }
+
+        .alert-icon {
+            font-size: 1.3rem;
+            flex-shrink: 0;
+            line-height: 1.2;
+        }
+
+        .steps-list {
+            list-style: none;
+            counter-reset: step-counter;
+            margin-top: 1.2rem;
+        }
+
+        .step-item {
+            position: relative;
+            padding-left: 54px;
+            margin-bottom: 1.8rem;
+        }
+
+        .step-item::before {
+            counter-increment: step-counter;
+            content: counter(step-counter);
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 36px;
+            height: 36px;
+            background: var(--surface-card);
+            border: 2px solid var(--primary);
+            color: var(--primary);
+            font-weight: 700;
+            font-size: 1.05rem;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .step-title {
+            font-size: 1.08rem;
+            font-weight: 600;
+            color: var(--text-main);
+            margin-bottom: 0.3rem;
+        }
+
+        .extension-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--surface-card);
+            border: 1px solid var(--border);
+            padding: 8px 16px;
+            border-radius: var(--radius-md);
+            color: var(--text-main);
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 0.95rem;
+            transition: all 0.2s ease;
+            margin: 0.4rem 0.4rem 0.4rem 0;
+        }
+
+        .extension-badge:hover {
+            border-color: var(--primary);
+            background: var(--surface-hover);
+            transform: translateY(-2px);
+        }
+
+        .code-snippet {
+            background: #090d16;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 0.75rem 1rem;
+            font-family: Consolas, Monaco, 'Courier New', monospace;
+            font-size: 0.9rem;
+            color: #38bdf8;
+            margin: 0.6rem 0;
+            overflow-x: auto;
+        }
+
+        .grid-benefits {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .benefit-box {
+            background: var(--surface-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 1.1rem;
+        }
+
+        .benefit-title {
+            font-weight: 600;
+            color: var(--text-main);
+            font-size: 0.95rem;
+            margin-bottom: 0.4rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .benefit-desc {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-bottom: 0;
+        }
+
+        footer {
+            text-align: center;
+            padding-top: 2rem;
+            border-top: 1px solid var(--border);
+            color: var(--text-dim);
+            font-size: 0.88rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="badge-app">FB Video Watcher &bull; Tài liệu trợ giúp</div>
+            <h1>Hướng dẫn Cài đặt Cookies (cookies.txt)</h1>
+            <p class="subtitle">
+                Giải pháp mở khóa video riêng tư, video nhóm kín Facebook, video giới hạn độ tuổi YouTube và mở khóa độ phân giải 1080p / 4K trên Bilibili.
+            </p>
+        </header>
+
+        <!-- Card: Vì sao cần cookies.txt -->
+        <section class="card">
+            <div class="card-header">
+                <div class="card-icon">🔑</div>
+                <h2>Vì sao cần file cookies.txt?</h2>
+            </div>
+            <p>
+                Trình phát video chạy độc lập trên máy tính không thể tự đăng nhập tài khoản Facebook hay Bilibili của bạn. File <code>cookies.txt</code> (chuẩn Netscape) đóng vai trò là "chìa khóa phiên duyệt web", cấp quyền để ứng dụng trích xuất luồng video chất lượng cao nhất mà tài khoản của bạn được phép xem.
+            </p>
+
+            <div class="grid-benefits">
+                <div class="benefit-box">
+                    <div class="benefit-title">🔒 Facebook Nhóm kín & Riêng tư</div>
+                    <p class="benefit-desc">Xem và tải các video trong Private Groups, video chế độ Bạn bè mà khách lạ không thể truy cập.</p>
+                </div>
+                <div class="benefit-box">
+                    <div class="benefit-title">📺 Bilibili 1080p / 60fps / 4K</div>
+                    <p class="benefit-desc">Bilibili chặn khách vãng lai chỉ xem được 480p. Dùng cookie tài khoản để mở khóa toàn bộ chất lượng cao.</p>
+                </div>
+                <div class="benefit-box">
+                    <div class="benefit-title">🔞 YouTube Giới hạn độ tuổi</div>
+                    <p class="benefit-desc">Xem mượt mà các video YouTube 18+, video giới hạn quốc gia hoặc video dành riêng cho Hội viên (Members).</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Card: Hướng dẫn xuất cookies -->
+        <section class="card">
+            <div class="card-header">
+                <div class="card-icon">📥</div>
+                <h2>Cách 1: Xuất cookies bằng tiện ích mở rộng (Khuyên dùng)</h2>
+            </div>
+            <p>
+                Đây là phương pháp đơn giản, an toàn và trực quan nhất. Bạn chỉ cần cài một tiện ích mở rộng mã nguồn mở (Open Source) chạy hoàn toàn cục bộ trên trình duyệt.
+            </p>
+
+            <div style="margin: 1rem 0;">
+                <span style="font-size: 0.9rem; color: var(--text-muted); display: block; margin-bottom: 6px;">Tiện ích khuyên dùng (Get cookies.txt LOCALLY):</span>
+                <a href="https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc" target="_blank" class="extension-badge">
+                    🌐 Cài đặt cho Chrome / Edge / Brave / Cốc Cốc
+                </a>
+                <a href="https://addons.mozilla.org/en-US/firefox/addon/cookies-txt/" target="_blank" class="extension-badge">
+                    🦊 Cài đặt cho Mozilla Firefox
+                </a>
+            </div>
+
+            <ol class="steps-list">
+                <li class="step-item">
+                    <div class="step-title">Cài đặt tiện ích mở rộng</div>
+                    <p>Nhấp vào liên kết ở trên tương ứng với trình duyệt bạn đang sử dụng và nhấn <strong>"Thêm vào Chrome"</strong> (hoặc Firefox).</p>
+                </li>
+                <li class="step-item">
+                    <div class="step-title">Đăng nhập trang web cần lấy cookie</div>
+                    <p>Mở tab mới trên trình duyệt và đăng nhập vào tài khoản của bạn (ví dụ: <a href="https://www.facebook.com" target="_blank" style="color: var(--primary);">facebook.com</a> hoặc <a href="https://www.bilibili.com" target="_blank" style="color: var(--primary);">bilibili.com</a>).</p>
+                </li>
+                <li class="step-item">
+                    <div class="step-title">Xuất file cookies.txt</div>
+                    <p>Trong khi đang ở trang web đó, nhấp vào biểu tượng tiện ích <strong>Get cookies.txt LOCALLY</strong> trên thanh công cụ &rarr; Nhấn nút <strong>"Export"</strong> để tải file về máy tính.</p>
+                    <p>Đặt tên gợi nhớ, ví dụ: <code>facebook_cookies.txt</code> hoặc <code>cookies.txt</code> và lưu vào thư mục an toàn (như <em>Documents</em> hoặc thư mục cài app).</p>
+                </li>
+            </ol>
+        </section>
+
+        <!-- Card: Cách nhập vào ứng dụng -->
+        <section class="card">
+            <div class="card-header">
+                <div class="card-icon">⚙️</div>
+                <h2>Cách nhập (Import) file vào FB Video Watcher</h2>
+            </div>
+            <ol class="steps-list">
+                <li class="step-item">
+                    <div class="step-title">Mở hộp thoại Cài đặt & Cấu hình</div>
+                    <p>Trong cửa sổ FB Video Watcher, nhấn tổ hợp phím <strong>Ctrl + ,</strong> (hoặc nhấp chuột phải vào màn hình video &rarr; chọn <em>Cài đặt & Cấu hình...</em>).</p>
+                </li>
+                <li class="step-item">
+                    <div class="step-title">Chọn file cookies vừa xuất</div>
+                    <p>Tìm đến mục <strong>"File cookies:"</strong> &rarr; Nhấn nút <strong>"Chọn file..."</strong> &rarr; Trỏ đến file <code>cookies.txt</code> bạn vừa tải về ở bước trên.</p>
+                </li>
+                <li class="step-item">
+                    <div class="step-title">Lưu cài đặt và thưởng thức</div>
+                    <p>Nhấn nút <strong>"Lưu cấu hình"</strong> ở góc dưới hộp thoại. Giờ đây bạn có thể dán bất kỳ liên kết video nào để xem ngay lập tức!</p>
+                </li>
+            </ol>
+        </section>
+
+        <!-- Card: Lưu ý an ninh -->
+        <section class="card">
+            <div class="card-header">
+                <div class="card-icon">🛡️</div>
+                <h2>Lưu ý quan trọng về An toàn & Bảo mật</h2>
+            </div>
+            
+            <div class="alert-box alert-warning">
+                <div class="alert-icon">⚠️</div>
+                <div>
+                    <strong>TUYỆT ĐỐI KHÔNG gửi file cookies.txt cho người khác:</strong><br>
+                    File cookies chứa mã phiên xác thực của bạn. Bất kỳ ai có file này đều có thể đăng nhập vào tài khoản mạng xã hội của bạn mà không cần mật khẩu.
+                </div>
+            </div>
+
+            <div class="alert-box alert-info">
+                <div class="alert-icon">💡</div>
+                <div>
+                    <strong>Chính sách bảo mật của FB Video Watcher:</strong><br>
+                    Ứng dụng chỉ đọc file cookie cục bộ từ máy tính của bạn và chuyển trực tiếp đến máy chủ của Facebook / YouTube / Bilibili qua giao thức SSL mã hóa an toàn. Ứng dụng <strong>100% không thu thập, không lưu trữ từ xa và không gửi dữ liệu đến bất kỳ bên thứ ba nào</strong>.
+                </div>
+            </div>
+
+            <p style="margin-top: 1rem;">
+                <em>Mẹo:</em> Nếu sau này bạn đăng xuất tài khoản trên trình duyệt hoặc đổi mật khẩu, cookie cũ sẽ hết hiệu lực. Lúc đó bạn chỉ cần xuất lại file <code>cookies.txt</code> mới theo các bước trên.
+            </p>
+        </section>
+
+        <footer>
+            <p>FB Video Watcher &bull; Trình phát video chuyên dụng tối ưu cho Windows</p>
+        </footer>
+    </div>
+</body>
+</html>
