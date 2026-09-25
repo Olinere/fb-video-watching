@@ -84,7 +84,7 @@
 | `Ctrl + H` | Xem lịch sử các video đã phát |
 | `Chuột phải` | Mở Menu đầy đủ (Nạp phụ đề, tốc độ phát, tỷ lệ khung hình...) |
 
-*(Bạn có thể vào **⚙ Cài đặt $\rightarrow$ Phím tắt** để thay đổi bất kỳ phím nào theo thói quen).*
+*(Bạn có thể vào **⚙ Cài đặt → Phím tắt** để thay đổi bất kỳ phím nào theo thói quen).*
 
 ---
 
