@@ -36,6 +36,22 @@ settings.json
 readme2.md
 vlc-help.txt
 
+# Archives & backups
+*.zip
+*.7z
+*.rar
+*.tar
+*.gz
+
+# Local runner scripts
+*.cmd
+run.bat
+
+# Cookie dumps & tokens
+tele*.txt
+y*.txt
+cookies*.txt
+
 # IDE & OS
 .vscode/
 .idea/
