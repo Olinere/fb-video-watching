@@ -1,68 +1,40 @@
-# Virtual environment
-.fbwenv/
-venv/
-.venv/
-env/
-
-# Python cache
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
 *.pyc
-.pytest_cache/
+
+# C extensions
+*.so
+
+# Distribution / packaging
 build/
 dist/
 *.egg-info/
-
-# PyInstaller / Build artifacts
 *.manifest
 *.spec.bak
-version_info.txt
-build.bat
-fb_video_watcher.spec
 
-# Config & local runtime data (do not leak user credentials)
-.fb-video-watcher/
-history.db
-cookies.txt
-settings.json
-*.session
-*.session-journal
+# Virtual environments
+.env
+.venv
+env/
+venv/
+.fbwenv/
 
-# Temporary download files
+# Unit test cache
+.pytest_cache/
+
+# Temporary media & stream fragments
 *.part
 *.ytdl
 *.mp4.part
 
-# Dev & scratch notes
-*plan*.md
-readme2.md
-vlc-help.txt
-Agent.md
-agent.md
-specs.md
-specs*.md
-
-# Archives & backups
-*.zip
-*.7z
-*.rar
-*.tar
-*.gz
-
-# Local runner scripts
-*.cmd
-run.bat
-
-# Cookie dumps & tokens
-tele*.txt
-y*.txt
-cookies*.txt
-
-# IDE & OS
+# Editor & OS files
 .vscode/
 .idea/
 *.swp
+*.swo
+*~
 Thumbs.db
 Desktop.ini
 .DS_Store
