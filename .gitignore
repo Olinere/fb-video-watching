@@ -17,6 +17,9 @@ dist/
 # PyInstaller / Build artifacts
 *.manifest
 *.spec.bak
+version_info.txt
+build.bat
+fb_video_watcher.spec
 
 # Config & local runtime data (do not leak user credentials)
 .fb-video-watcher/
