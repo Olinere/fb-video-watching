@@ -1,7 +1,7 @@
 # FB Video Watcher 🎬 & Universal Video Streamer
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20(64--bit)-0078D6?logo=windows)](https://github.com)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20(64--bit)-0078D6?logo=windows)](https://github.com/Olinere/fb-video-watching/releases)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python)](https://www.python.org/)
 [![Tests](https://img.shields.io/badge/Tests-296%20Passed-brightgreen)](tests/)
 [![RAM Usage](https://img.shields.io/badge/Memory-~40MB%20RAM-success)](#-kiến-trúc-tiết-kiệm-tài-nguyên--xài-xong-dọn)
@@ -14,7 +14,7 @@
 
 Người dùng thông thường **không cần cài đặt Python** hay gõ lệnh. Bạn chỉ cần tải bản `.exe` dựng sẵn:
 
-👉 **[Tải bản cài đặt sẵn mới nhất (.exe) tại GitHub Releases](https://github.com)**
+👉 **Tải bản cài đặt sẵn mới nhất (.exe) tại: [Releases · Olinere/fb-video-watching](https://github.com/Olinere/fb-video-watching/releases)**
 
 - **Yêu cầu:** Windows 10/11 64-bit.
 - **Tiện ích đi kèm:** Nếu máy tính của bạn chưa có VLC Media Player, ứng dụng sẽ **tự động tải và cài đặt ngầm bản VLC 64-bit chính thức** từ VideoLAN trong lần đầu chạy.
@@ -33,8 +33,8 @@ Nếu bạn muốn đóng góp hoặc chạy trực tiếp từ mã nguồn Pyth
 
 ```powershell
 # 1. Clone mã nguồn
-git clone https://github.com/<username>/FB-Video-watching.git
-cd FB-Video-watching
+git clone https://github.com/Olinere/fb-video-watching.git
+cd fb-video-watching
 
 # 2. Tạo môi trường ảo (khuyến nghị)
 python -m venv .venv
