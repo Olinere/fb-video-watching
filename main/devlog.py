@@ -22,15 +22,58 @@ class DevLogHandler(logging.Handler):
         super().__init__()
         self.root = root
         self.dispatch_fn = dispatch_fn
+        self._pending_ids = set()
+
+    def cancel_all_pending(self) -> None:
+        """Cancel all pending after/idle callbacks queued on root."""
+        for tid in list(self._pending_ids):
+            try:
+                self.root.after_cancel(tid)
+            except Exception:
+                pass
+        self._pending_ids.clear()
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
+            if not hasattr(self.root, "winfo_exists"):
+                try:
+                    logging.getLogger().removeHandler(self)
+                except Exception:
+                    pass
+                return
+            try:
+                if not self.root.winfo_exists():
+                    try:
+                        logging.getLogger().removeHandler(self)
+                    except Exception:
+                        pass
+                    return
+            except Exception:
+                try:
+                    logging.getLogger().removeHandler(self)
+                except Exception:
+                    pass
+                return
             msg = self.format(record)
             level = record.levelname.upper()
-            # Post to Tkinter main thread safely
-            self.root.after(0, self.dispatch_fn, msg, level)
+
+            tid = None
+            def _cb(m=msg, lvl=level):
+                if tid in self._pending_ids:
+                    self._pending_ids.discard(tid)
+                try:
+                    self.dispatch_fn(m, lvl)
+                except Exception:
+                    pass
+
+            tid = self.root.after_idle(_cb)
+            self._pending_ids.add(tid)
         except Exception:
-            pass
+            try:
+                logging.getLogger().removeHandler(self)
+            except Exception:
+                pass
+
 
 
 class DevLogPanel:
@@ -47,11 +90,13 @@ class DevLogPanel:
         sidebar_parent: tk.Widget,
         on_visibility_change: Optional[Callable[[bool], None]] = None,
         is_dark_theme_fn: Optional[Callable[[], bool]] = None,
+        on_dock_change: Optional[Callable[[bool], None]] = None,
     ):
         self.root = root
         self.sidebar_parent = sidebar_parent
         self.on_visibility_change = on_visibility_change
         self.is_dark_theme_fn = is_dark_theme_fn or (lambda: True)
+        self.on_dock_change = on_dock_change
 
         self._is_detached = False
         self._is_visible = False
@@ -62,6 +107,7 @@ class DevLogPanel:
 
         # Container for sidebar mode
         self.panel_frame = ttk.Frame(self.sidebar_parent, width=380)
+        self.panel_frame.pack_propagate(False)
         self._build_panel_content(self.panel_frame)
 
         # Connect logging handler to root logger so all components are captured
@@ -75,6 +121,17 @@ class DevLogPanel:
             logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
         )
         root_logger.addHandler(self._handler)
+
+        def _on_root_destroyed(event=None):
+            if event is not None and getattr(event, "widget", None) != self.root:
+                return
+            self.destroy()
+
+        try:
+            self.root.bind("<Destroy>", _on_root_destroyed, add="+")
+        except Exception:
+            pass
+
 
     def _build_panel_content(self, container: tk.Widget) -> None:
         """Build the header toolbar, log text widget with scrollbars, and filter bar inside container."""
@@ -307,6 +364,12 @@ class DevLogPanel:
         for child in self.panel_frame.winfo_children():
             child.destroy()
 
+        if self.on_dock_change:
+            try:
+                self.on_dock_change(True)
+            except Exception:
+                pass
+
         # Create Toplevel floating window
         self._detached_window = tk.Toplevel(self.root)
         self._detached_window.title("📋 FB Video Watcher - Devlog")
@@ -339,6 +402,12 @@ class DevLogPanel:
         self._build_panel_content(self.panel_frame)
         self._refresh_log_display()
 
+        if self.on_dock_change:
+            try:
+                self.on_dock_change(False)
+            except Exception:
+                pass
+
         if self._is_visible:
             self.panel_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=False)
             if self._auto_scroll_var.get():
@@ -368,3 +437,23 @@ class DevLogPanel:
             self.root.clipboard_append(full_text)
         except Exception:
             pass
+
+    def destroy(self) -> None:
+        """Clean up logging handler and detached floating window."""
+        try:
+            logging.getLogger().removeHandler(self._handler)
+        except Exception:
+            pass
+        if hasattr(self, "_handler") and self._handler:
+            try:
+                self._handler.cancel_all_pending()
+            except Exception:
+                pass
+        if self._detached_window and self._detached_window.winfo_exists():
+            try:
+                self._detached_window.destroy()
+            except Exception:
+                pass
+            self._detached_window = None
+
+

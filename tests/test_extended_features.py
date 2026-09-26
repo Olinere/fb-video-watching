@@ -90,6 +90,11 @@ class TestExtendedFeatures(unittest.TestCase):
     def tearDown(self):
         if hasattr(self.gui, "destroy"):
             self.gui.destroy()
+        try:
+            self.root.geometry(f"{DEFAULT_WINDOW_WIDTH}x{DEFAULT_WINDOW_HEIGHT}+50+50")
+            self.root.update_idletasks()
+        except Exception:
+            pass
         self.temp_dir.cleanup()
 
     # --- 1. Volume / Mute OSD and Persistence ---
@@ -419,8 +424,33 @@ class TestExtendedFeatures(unittest.TestCase):
                 width=1080,
                 height=1920,
             )
+            # When auto-detect is enabled, vertical reel auto-switches to 9:16
+            self.settings_mgr.set("ui", "pip_auto_aspect_ratio", True)
             app._on_resolve_completed(fut_vert, "https://www.facebook.com/reel/222")
             self.assertEqual(self.gui._pip_aspect_ratio, "9:16")
+
+            # By default (pip_auto_aspect_ratio=False), user's last chosen aspect ratio is preserved
+            self.settings_mgr.set("ui", "pip_auto_aspect_ratio", False)
+            self.gui.set_pip_aspect_ratio("16:9")
+            app._on_resolve_completed(fut_vert, "https://www.facebook.com/reel/222")
+            self.assertEqual(self.gui._pip_aspect_ratio, "16:9")
+            self.assertEqual(self.settings_mgr.get("ui", "pip_aspect_ratio"), "16:9")
+
+    def test_pip_aspect_ratio_persistence_and_settings(self):
+        """Verify PiP aspect ratio remembers user's choice and persists in SettingsDialog."""
+        # 1. User sets 16:9
+        self.gui.set_pip_aspect_ratio("16:9")
+        self.assertEqual(self.gui._pip_aspect_ratio, "16:9")
+        self.assertEqual(self.settings_mgr.get("ui", "pip_aspect_ratio"), "16:9")
+
+        # 2. SettingsDialog edits aspect ratio to 9:16 and saves
+        self.gui.open_settings_dialog()
+        dialog = self.gui._settings_dialog
+        self.assertIsNotNone(dialog)
+        dialog.pip_aspect_ratio_var.set("9:16")
+        dialog._save_and_close()
+        self.assertEqual(self.settings_mgr.get("ui", "pip_aspect_ratio"), "9:16")
+        self.assertEqual(self.gui._pip_aspect_ratio, "9:16")
 
     def test_clipboard_focus_in_detection(self):
         """Verify _on_window_focus_in detects copied video URL and displays toast."""
@@ -730,18 +760,18 @@ class TestExtendedFeatures(unittest.TestCase):
         self.gui.set_pip_aspect_ratio("9:16")
         self.root.update_idletasks()
 
-        # Coordinates should be strictly on-screen
+        # Coordinates should be strictly on-screen within active monitor bounds
         win_x = self.root.winfo_x()
         win_y = self.root.winfo_y()
         win_w = self.root.winfo_width()
         win_h = self.root.winfo_height()
-        screen_w = self.root.winfo_screenwidth()
-        screen_h = self.root.winfo_screenheight()
+        from main.platform_utils import get_monitor_work_area_for_window
+        mon_left, mon_top, mon_w, mon_h = get_monitor_work_area_for_window(self.root)
 
-        self.assertGreaterEqual(win_x, 0)
-        self.assertGreaterEqual(win_y, 0)
-        self.assertLessEqual(win_x + win_w, screen_w)
-        self.assertLessEqual(win_y + win_h, screen_h)
+        self.assertGreaterEqual(win_x, mon_left)
+        self.assertGreaterEqual(win_y, mon_top)
+        self.assertLessEqual(win_x + win_w, mon_left + mon_w)
+        self.assertLessEqual(win_y + win_h, mon_top + mon_h)
 
         # Ensure pip_progress is placed
         self.assertEqual(self.gui.pip_progress.winfo_manager(), "place")

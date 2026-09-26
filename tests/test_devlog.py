@@ -39,6 +39,8 @@ class TestDevLog(unittest.TestCase):
 
     def tearDown(self):
         try:
+            if hasattr(self.gui, "destroy"):
+                self.gui.destroy()
             if self.gui.devlog_panel._detached_window and self.gui.devlog_panel._detached_window.winfo_exists():
                 self.gui.devlog_panel._detached_window.destroy()
             self.root.update_idletasks()
@@ -51,6 +53,14 @@ class TestDevLog(unittest.TestCase):
     def test_devlog_toggle_checkbox(self):
         self.assertFalse(self.gui.devlog_var.get())
         self.assertFalse(self.gui.devlog_panel._is_visible)
+
+        # In locked state, toggle_devlog is ignored
+        self.gui.toggle_devlog()
+        self.assertFalse(self.gui.devlog_var.get())
+
+        # Unlock dev mode
+        self.gui.enable_dev_mode()
+        self.assertTrue(self.gui._dev_mode_unlocked)
 
         # Toggle on
         self.gui.toggle_devlog()

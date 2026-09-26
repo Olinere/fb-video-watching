@@ -19,10 +19,11 @@ class QueuePersistence:
     def save(self, queue: PlaybackQueue) -> bool:
         if not self.policy.allow_queue_persist():
             return False
+        items = [item for item in queue.snapshot() if not item.get("privacy_only")]
         temp_path = self.path.with_suffix(self.path.suffix + ".tmp")
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            temp_path.write_text(json.dumps(queue.snapshot(), ensure_ascii=False), encoding="utf-8")
+            temp_path.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
             os.replace(temp_path, self.path)
             return True
         except OSError:

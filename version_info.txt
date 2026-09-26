@@ -1,8 +1,8 @@
 # UTF-8
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 0, 4, 0),
-    prodvers=(1, 0, 4, 0),
+    filevers=(1, 0, 5, 0),
+    prodvers=(1, 0, 5, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -17,14 +17,14 @@ VSVersionInfo(
         '040904B0',
         [StringStruct('CompanyName', 'P A U L / JustFun'),
         StringStruct('FileDescription', 'FB Video Watcher'),
-        StringStruct('FileVersion', '1.0.4'),
+        StringStruct('FileVersion', '1.0.5-beta'),
         StringStruct('InternalName', 'FB-Video-Watcher'),
         StringStruct('LegalCopyright', '© 2026 P A U L / JustFun. All rights reserved.'),
         StringStruct('LegalTrademarks', 'Freeware (Miễn phí cho mục đích cá nhân)'),
         StringStruct('Comments', 'Discord: https://discord.gg/9gM5FAXDrC | GitHub: https://github.com/Olinere/fb-video-watching'),
         StringStruct('OriginalFilename', 'FB-Video-Watcher.exe'),
         StringStruct('ProductName', 'FB Video Watcher'),
-        StringStruct('ProductVersion', '1.0.4')])
+        StringStruct('ProductVersion', '1.0.5-beta')])
       ]), 
     VarFileInfo([VarStruct('Translation', [1033, 1200])])
   ]

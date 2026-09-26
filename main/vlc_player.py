@@ -121,12 +121,14 @@ class VLCPlayer:
         audio_url: Optional[str] = None,
         subtitle_file: Optional[str] = None,
         http_headers: Optional[dict] = None,
+        network_caching_ms: Optional[int] = None,
     ) -> None:
         """
         Start playback. If stream_url is provided, load and play it.
         If audio_url is provided (e.g. Facebook DASH separate stream), attach it as audio slave track.
         If subtitle_file is provided, attach it as subtitle slave track.
         If http_headers is provided (e.g. Referer, User-Agent), configure media options.
+        If network_caching_ms is provided, configure per-stream network cache.
         Otherwise resumes current media.
         """
         if subtitle_file is not None:
@@ -152,6 +154,9 @@ class VLCPlayer:
                 self._current_media = None
 
             self._current_media = self.instance.media_new(stream_url)
+
+            if network_caching_ms is not None and int(network_caching_ms) > 0:
+                self._current_media.add_option(f":network-caching={int(network_caching_ms)}")
 
             # Apply custom HTTP headers (Referer, User-Agent, Cookie) if required by CDN (e.g. Pornhub, Bilibili)
             active_headers = http_headers or self._current_http_headers

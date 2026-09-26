@@ -1,6 +1,7 @@
 # Virtual environment
 .fbwenv/
 venv/
+.venv/
 env/
 
 # Python cache
@@ -11,15 +12,34 @@ __pycache__/
 .pytest_cache/
 build/
 dist/
+*.egg-info/
 
-# Config & local data
+# PyInstaller / Build artifacts
+*.manifest
+*.spec.bak
+
+# Config & local runtime data (do not leak user credentials)
 .fb-video-watcher/
 history.db
 cookies.txt
 settings.json
+*.session
+*.session-journal
+
+# Temporary download files
+*.part
+*.ytdl
+*.mp4.part
+
+# Dev & scratch notes
+*plan*.md
+readme2.md
+vlc-help.txt
 
 # IDE & OS
 .vscode/
 .idea/
 *.swp
 Thumbs.db
+Desktop.ini
+.DS_Store

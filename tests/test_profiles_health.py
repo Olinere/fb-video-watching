@@ -26,6 +26,18 @@ class TestProfilesAndHealth(unittest.TestCase):
         self.assertEqual(monitor.tick("buffering", now=6).state, "degraded")
         self.assertEqual(monitor.tick("buffering", now=16).state, "critical")
         self.assertEqual(monitor.tick("playing", now=17).state, "critical")
+        # Health recovery after sustained playing
+        self.assertEqual(monitor.tick("playing", now=28).state, "degraded")
+        self.assertEqual(monitor.tick("playing", now=38).state, "healthy")
+
+    def test_health_reset(self):
+        monitor = PlaybackHealthMonitor(degraded_after_ms=5000, critical_after_ms=15000)
+        monitor.tick("buffering", now=0)
+        monitor.tick("buffering", now=16)
+        self.assertEqual(monitor.snapshot().state, "critical")
+        monitor.reset()
+        self.assertEqual(monitor.snapshot().state, "healthy")
+        self.assertEqual(monitor.snapshot().buffering_ms, 0)
 
 
 if __name__ == "__main__":

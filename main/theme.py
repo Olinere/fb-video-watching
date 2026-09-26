@@ -6,7 +6,7 @@ Strictly adheres to specs.md §4.5 and Agent.md §5.2.E (Theme Abstraction).
 import sys
 import tkinter as tk
 from tkinter import ttk
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Callable
 
 from main.platform_utils import set_windows_dark_titlebar
 
@@ -55,8 +55,13 @@ class ThemeManager:
         self.root = root
         self.mode = initial_theme
         self.current_theme = "dark"  # Resolved theme ('dark' or 'light')
+        self._listeners = []
         self.style = ttk.Style(self.root)
         self.apply_theme(self.mode)
+
+    def is_dark(self) -> bool:
+        """Return True if the active theme is dark mode."""
+        return getattr(self, "current_theme", "dark") == "dark"
 
     def _detect_system_theme(self) -> str:
         """Query Windows registry to detect OS Dark/Light preference."""
@@ -101,6 +106,26 @@ class ThemeManager:
             sv_ttk.set_theme(self.current_theme)
         except Exception:
             self._apply_ttk_styles(colors)
+
+        # Notify registered theme change listeners
+        if hasattr(self, "_listeners"):
+            for cb in list(self._listeners):
+                try:
+                    cb(self.current_theme, colors)
+                except Exception:
+                    pass
+
+    def add_listener(self, callback: Callable[[str, Dict[str, str]], None]) -> None:
+        """Register a callback to be notified whenever the application theme changes."""
+        if not hasattr(self, "_listeners"):
+            self._listeners = []
+        if callback not in self._listeners:
+            self._listeners.append(callback)
+
+    def remove_listener(self, callback: Callable[[str, Dict[str, str]], None]) -> None:
+        """Unregister a theme change callback."""
+        if hasattr(self, "_listeners") and callback in self._listeners:
+            self._listeners.remove(callback)
 
     def _apply_ttk_styles(self, colors: Dict[str, str]) -> None:
         """Update ttk.Style elements with current palette."""

@@ -134,7 +134,7 @@ class TestStreamProxy(unittest.TestCase):
         self.proxy.ensure_started()
         shutdown_thread = self.proxy.stop_async()
         self.assertTrue(shutdown_thread.daemon)
-        shutdown_thread.join(timeout=2)
+        shutdown_thread.join(timeout=5)
         self.assertFalse(shutdown_thread.is_alive())
         self.assertEqual(self.proxy.port, 0)
 

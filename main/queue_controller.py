@@ -50,3 +50,11 @@ class QueueController:
         self.queue.mark_status(item.queue_id, "played")
         return self.queue.next_item()
 
+    def next_item(self) -> Optional[QueueItem]:
+        """Manually advance to next playable item."""
+        return self.queue.next_item()
+
+    def previous_item(self) -> Optional[QueueItem]:
+        """Manually navigate to previous playable item."""
+        return self.queue.previous_item()
+

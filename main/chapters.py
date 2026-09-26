@@ -64,10 +64,11 @@ def normalize_chapters(
             continue
         # Providers occasionally return a chapter whose start is before the
         # previous chapter.  Keep the first entry and discard the bad one.
-        if result and start_ms < result[-1].start_ms:
+        if result and start_ms <= result[-1].start_ms:
             continue
         if result and result[-1].end_ms is not None and start_ms < result[-1].end_ms:
-            continue
+            prev = result[-1]
+            result[-1] = Chapter(prev.index, prev.title, prev.start_ms, start_ms)
         seen.add(key)
         result.append(Chapter(len(result), title, start_ms, end_ms))
     return result

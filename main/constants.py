@@ -139,6 +139,7 @@ UI_IDLE_INTERVAL_MS = 1000       # Lower-frequency UI polling while stopped/paus
 CLIPBOARD_POLL_INTERVAL_MS = 2500
 HEALTH_DEGRADED_AFTER_MS = 5000
 HEALTH_CRITICAL_AFTER_MS = 15000
+HEALTH_SUGGESTION_COOLDOWN_SECONDS = 60
 
 # Resource guards.  Queue and collection entries contain only small metadata;
 # direct streams are resolved for the active item and are never stored here.
@@ -191,11 +192,17 @@ DEFAULT_SETTINGS = {
         "seek_long": 30,             # seconds
         "always_on_top": False,
         "clipboard_auto_detect": True,
+        "dev_mode_unlocked": False,
         "pip_aspect_ratio": "16:9",  # "16:9" | "9:16"
+        "pip_auto_aspect_ratio": False, # Auto-adapt PiP ratio to video orientation (Reels/Shorts)
         "pip_width_horizontal": 480,
         "pip_height_horizontal": 270,
+        "pip_x_horizontal": None,
+        "pip_y_horizontal": None,
         "pip_width_vertical": 270,
         "pip_height_vertical": 480,
+        "pip_x_vertical": None,
+        "pip_y_vertical": None,
     },
     "advanced": {
         "cookie_file": "",           # path to cookies.txt
@@ -205,7 +212,7 @@ DEFAULT_SETTINGS = {
         "resume_playback": True,     # Auto-resume from last saved position
         "loop_enabled": False,       # Repeat video playback
         "queue_loop_enabled": False, # Repeat the queue after a natural end
-        "queue_persist": False,      # Queue persistence is opt-in
+        "queue_persist": True,       # Auto-persist queue across sessions by default
         "skip_failed_items": False,  # Do not skip errors silently by default
     },
     "download": {
@@ -232,11 +239,24 @@ DEFAULT_SETTINGS = {
         "cpu_affinity_mode": "auto",       # "auto" | "p_cores" | "all"
         "disable_eco_qos": True,           # Disable Windows Power Throttling / Efficiency mode
         "high_precision_timer": True,      # Enable 1ms multimedia timer (timeBeginPeriod)
+        "gpu_preference": "auto",          # "auto" | "integrated" | "discrete" | "software"
     },
     "telegram": {
         "api_id": "",                      # Telegram API ID from my.telegram.org (shared across all accounts)
         "api_hash": "",                    # Telegram API Hash from my.telegram.org (shared across all accounts)
         "accounts": [],                    # List of {"session_file": str, "label": str, "active": bool}
+    },
+    "network": {
+        "proxy_mode": "direct",            # "direct" (mặc định tắt) | "system" | "custom"
+        "proxy_type": "socks5h",           # "http" | "socks5" | "socks5h"
+        "proxy_host": "",
+        "proxy_port": 1080,
+        "proxy_user": "",
+        "proxy_pass": "",
+        "doh_enabled": False,              # Mặc định tắt (dùng DNS của máy)
+        "doh_provider": "cloudflare",      # "cloudflare" | "google" | "quad9" | "adguard" | "custom"
+        "doh_custom_url": "",
+        "route_vlc_via_stream_proxy": True, # Định tuyến VLC qua local stream proxy khi DoH bật
     },
     "hotkeys": DEFAULT_HOTKEYS,
 }

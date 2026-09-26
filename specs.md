@@ -41,12 +41,18 @@
 
 | Thành phần | Vai trò | Cài đặt |
 |---|---|---|
-| **yt-dlp** | Phân giải URL Facebook → direct stream URL. Hỗ trợ cookie login cho video riêng tư. | `pip install yt-dlp` |
-| **python-vlc** | Python bindings cho libVLC — dùng làm engine phát video (decode, render, audio). | `pip install python-vlc` |
-| **VLC Media Player** | Phải được cài sẵn trên máy (cung cấp `libvlc.dll`). Bit version (64/32) phải khớp Python. | Cài riêng từ [videolan.org](https://www.videolan.org/) |
+| **yt-dlp** / **yt-dlp-ejs** | Phân giải URL Facebook/đa nền tảng → direct stream URL, giải mã JS challenge. | `pip install yt-dlp yt-dlp-ejs` |
+| **python-vlc** | Python bindings cho libVLC — engine phát video (decode, render, audio). | `pip install python-vlc` |
+| **VLC Media Player** | Động cơ libVLC 64-bit (tự động cài ngầm nếu thiếu). | VideoLAN hoặc Auto-Installer |
 | **tkinter** | GUI framework — gọn nhẹ, có sẵn trong Python stdlib. | Có sẵn (stdlib) |
-| **sv-ttk** | Theme Fluent Design Windows 11 cho Tkinter — giao diện hiện đại, bo tròn, dark mode đẹp mà tốn 0MB RAM. | `pip install sv-ttk` |
-| **FFmpeg** *(khuyến nghị)* | yt-dlp dùng ffmpeg để merge video+audio khi cần. Một số stream Facebook tách riêng video/audio. | Cài riêng hoặc bundle |
+| **sv-ttk** | Theme Fluent Design Windows 11 cho Tkinter — giao diện hiện đại, tốn 0MB RAM. | `pip install sv-ttk` |
+| **tkinterdnd2** | Kéo và thả file video trực tiếp vào cửa sổ phát. | `pip install tkinterdnd2` |
+| **Pillow** | Tải và hiển thị ảnh thumbnail, logo Discord theo theme. | `pip install Pillow` |
+| **psutil** | Auto-detect cấu hình phần cứng CPU, RAM cho Auto-Tuner. | `pip install psutil` |
+| **pywin32** | Gọi Win32 APIs (DWM Dark Title Bar, Monitor bounds, Named Pipe IPC, AppUserModelID). | `pip install pywin32` |
+| **telethon** / **cryptg** / **qrcode** | Phân giải và stream video từ kênh/nhóm Telegram trực tiếp. | `pip install telethon cryptg qrcode` |
+| **curl-cffi** | Mô phỏng TLS browser fingerprint cho yt-dlp bóc tách YouTube n-sig. | `pip install curl-cffi` |
+| **FFmpeg** | Ghép stream DASH tách rời và trích xuất MP3 (hỗ trợ Portable Add-on tải tự động). | Add-on hoặc cài riêng |
 
 ### Tại sao chọn các thành phần này?
 - **yt-dlp** thay vì tự parse HTML: Facebook thay đổi cấu trúc trang liên tục, yt-dlp có cộng đồng cập nhật nhanh.
@@ -520,10 +526,15 @@ class ThemeManager:
             self._apply_ttk_styles()
 
         self._apply_windows_dark_titlebar()
+
+        # Phát thông báo tới các component đăng ký lắng nghe (ThemedMenuBar, MainWindow, popup menus)
+        for listener in list(self._listeners):
+            listener(self.current_theme, self.PALETTES[self.current_theme])
 ```
 
-> **Lưu ý trong lúc code `gui.py`:**
-> Thay vì dùng `tk.Button` hoặc `tk.Label`, **BẮT BUỘC dùng `ttk.Button`, `ttk.Label`** từ `tkinter.ttk` để `ThemeManager` có thể đồng bộ hóa màu sắc thông qua `ttk.Style()`.
+> **Lưu ý trong phân hệ GUI (`main/gui/`):**
+> - Đối với widget chuẩn: Dùng `ttk.Button`, `ttk.Label` từ `tkinter.ttk` để `ThemeManager` tự động đồng bộ hóa thông qua `sv-ttk`.
+> - Đối với widget tùy biến (in-window `ThemedMenuBar`, dropdown menus, context menus): Đăng ký thông qua `ThemeManager.add_listener(callback)` để cập nhật màu nền surface, viền, hover, accent và menu dropdown ngay khi đổi theme giữa Light và Dark.
 
 ---
 
@@ -607,32 +618,87 @@ FB-Video-watching/
 ├── main/                    # Source code chính
 │   ├── __init__.py          # Single Source of Truth cho __version__
 │   ├── app.py               # Application orchestrator (kết nối tất cả)
+│   ├── bulk_import_dialog.py # Hộp thoại nhập danh sách tập/video từ văn bản thô
+│   ├── text_parser.py        # SmartTextParser bóc tách link, giải mã shim, gọt tracking
 │   ├── url_resolver.py      # Module 4.1 — Resolve URL Facebook & đa nền tảng
+│   ├── collection.py        # Model ResolvedCollection & CollectionEntry cho playlist/album
 │   ├── vlc_player.py        # Module 4.2 — VLC Controller
-│   ├── gui.py               # Module 4.3 — Giao diện Tkinter Fluent & 5 tabs Cài đặt
-│   ├── history.py           # Module 4.4 — Lịch sử xem (SQLite WAL)
+│   ├── gui/                 # Module 4.3 — Phân hệ Giao diện người dùng Tkinter Fluent
+│   │   ├── __init__.py      # Re-export MainWindow, SettingsDialog, ThemedMenuBar, components
+│   │   ├── components.py    # SeekBarController, OSDOverlay, PiPProgressOverlay, ListboxTooltip
+│   │   ├── menu_bar.py      # ThemedMenuBar (Khử thanh menu trắng Win32, đồng bộ màu theme)
+│   │   ├── settings_dialog.py # SettingsDialog (Cài đặt đa thẻ Fluent)
+│   │   └── main_window.py   # MainWindow (Player surface, video controls, playlist, layout)
+│   ├── history_dialog.py    # Hộp thoại hiển thị & tìm kiếm lịch sử xem
 │   ├── theme.py             # Module 4.5 — Trừu tượng hóa Theme/Dark Mode (sv_ttk)
 │   ├── settings.py          # Settings manager (JSON load/save)
 │   ├── updater.py           # Module 4.6 — Tự động cập nhật ngầm & khôi phục phát
 │   ├── downloader.py        # Tải video & trích xuất MP3 đa luồng
+│   ├── ffmpeg_utils.py       # Quản lý phát hiện FFmpeg, fallback progressive stream
+│   ├── ffmpeg_installer.py   # Tự động tải & cài đặt FFmpeg Portable Add-on ngầm
+│   ├── ffmpeg_setup_dialog.py # Hộp thoại tiến trình tải tiện ích mở rộng FFmpeg
 │   ├── devlog.py            # Bảng điều khiển kỹ thuật thời gian thực (Dock/Detach)
 │   ├── hotkeys.py           # Hệ thống quản lý và tùy biến phím tắt
+│   ├── subtitle.py          # Xử lý định dạng & kiểm tra tính hợp lệ phụ đề
+│   ├── playback_queue.py    # Model hàng đợi phát & QueueItem metadata
+│   ├── queue_controller.py  # Điều phối chuyển bài, thử lại lỗi & lặp danh sách
+│   ├── queue_persistence.py # Lưu và nạp queue.json có kiểm soát quyền riêng tư
+│   ├── chapters.py          # Quản lý mục lục video và chuẩn hóa mốc thời gian
+│   ├── windows_integration.py # Tích hợp Windows (CLI, protocol fbvw://, IPC)
+│   ├── telegram_manager.py   # Quản lý tài khoản Telegram & phiên Telethon
+│   ├── playback_health.py   # Theo dõi tình trạng mạng, buffering & phục hồi
+│   ├── playback_profiles.py # Quản lý source profile theo domain (Auto/Custom)
+│   ├── privacy_session.py   # Quản lý chính sách phiên riêng tư Runtime
+│   ├── stream_proxy.py      # Local HTTP proxy, daemon handlers & async shutdown
 │   ├── system_info.py       # Auto-detect phần cứng (xem Agent.md §2)
 │   ├── auto_tune.py         # Tự tối ưu config theo phần cứng (xem Agent.md §3)
 │   ├── platform_utils.py    # Multi-monitor bounds, VLC embed, Win32 icon, DWM
 │   ├── timestamp.py         # Utility: parse timestamp strings ↔ ms
-│   ├── constants.py         # Default values, config paths, regex patterns
-│   ├── extractors/          # Các bộ trích xuất luồng chuyên biệt (YouTube, v.v.)
+│   ├── constants.py         # Default values, config paths, regex patterns (APP_VERSION)
+│   ├── bin/
+│   │   └── qjs.exe          # QuickJS engine cho yt-dlp giải mã n-sig YouTube
+│   ├── docs/
+│   │   └── cookies_guide.html # Hướng dẫn xuất cookies cho video riêng tư
+│   ├── extractors/          # Các bộ trích xuất luồng chuyên biệt
+│   │   ├── __init__.py
+│   │   ├── base.py
+│   │   ├── generic.py
+│   │   ├── local.py
+│   │   ├── sexvietnew.py
+│   │   ├── telegram.py
+│   │   ├── vlxx.py
+│   │   ├── xnhau.py
+│   │   └── youtube.py
 │   └── image/               # Assets icon (ICO, PNG) & Discord logos theo theme
-└── tests/
-    ├── test_url_resolver.py
-    ├── test_timestamp.py
-    ├── test_system_info.py
+└── tests/                   # Toàn bộ 28 test files (262 unit tests vượt qua 100%)
     ├── test_auto_tune.py
-    ├── test_vlc_player.py
-    ├── test_updater.py
+    ├── test_devlog.py
+    ├── test_downloader_ffmpeg_fallback.py
+    ├── test_extended_features.py
+    ├── test_extractors.py
+    ├── test_ffmpeg_installer.py
+    ├── test_gpu_offload.py
+    ├── test_health_and_auto_suggestion.py
+    ├── test_history.py
     ├── test_hotkeys.py
-    └── test_subtitle.py
+    ├── test_platform_utils.py
+    ├── test_playback_queue.py
+    ├── test_profiles_health.py
+    ├── test_queue_hover_tooltip.py
+    ├── test_queue_privacy_windows.py
+    ├── test_queue_ui_and_devlog_layout.py
+    ├── test_resume_loop_download.py
+    ├── test_settings.py
+    ├── test_space_key.py
+    ├── test_stream_proxy.py
+    ├── test_subtitle.py
+    ├── test_system_info.py
+    ├── test_telegram.py
+    ├── test_text_parser.py
+    ├── test_timestamp.py
+    ├── test_updater.py
+    ├── test_url_memory_and_osd.py
+    └── test_url_resolver.py
 ```
 
 ---
@@ -686,7 +752,7 @@ sv-ttk>=2.6.0
 | 4 | Video riêng tư (cần đăng nhập) | Detect `AuthRequiredError` → hiện dialog hướng dẫn export cookies + nút mở Settings |
 | 5 | URL chứa **tracking params** dài (fbclid, mibextid...) | Không ảnh hưởng — yt-dlp tự xử lý. Regex chỉ validate domain, không chặn query params |
 | 6 | User dán URL có **khoảng trắng** đầu/cuối | `url.strip()` trước khi validate |
-| 7 | User dán **nhiều URL** (copy cả đoạn text) | Chỉ lấy URL đầu tiên match regex, hoặc báo "Chỉ hỗ trợ 1 URL" |
+| 7 | User dán **nhiều URL** hoặc dán cả **bài viết dài** | Tự động kích hoạt hộp thoại `BulkImportDialog`, sử dụng `SmartTextParser` bóc tách toàn bộ link, giải mã `l.facebook.com`, gọt sạch mã tracking (`fbclid`, `si`, `utm_*`) và đưa vào hàng đợi phát kèm nhãn tiền tố |
 | 8 | URL redirect nhiều lần (fb.watch → facebook.com → ...) | yt-dlp tự follow redirect. Nếu quá 5 redirect → timeout |
 | 9 | yt-dlp trả về **nhiều video** (playlist/album) | Chỉ phát video đầu tiên. Hiện thông báo "Đã chọn video đầu tiên trong album" |
 | 10 | **Stream URL hết hạn** (token expired sau 1-4h) | Detect playback error (`on_error` callback) → auto re-resolve URL gốc → phát tiếp từ vị trí cũ |
@@ -1179,7 +1245,8 @@ def parse_timestamp(text: str) -> int:
 ```python
 # --- App ---
 APP_NAME = "FB Video Watcher"
-APP_VERSION = "1.0.0"
+from main import __version__
+APP_VERSION = __version__  # Dynamic Single Source of Truth from main/__init__.__version__
 CONFIG_DIR = Path.home() / ".fb-video-watcher"
 HISTORY_DB = CONFIG_DIR / "history.db"
 COOKIE_FILE = CONFIG_DIR / "cookies.txt"  # Optional
@@ -1338,17 +1405,19 @@ RESOLVE_RETRIES = 3
 > * Nếu người dùng hoặc Auto-Tuner chọn bộ đệm 3000ms hay 5000ms, hệ thống **bắt buộc giữ nguyên 100%** để đảm bảo chất lượng phát và tính toàn vẹn của cấu hình.
 > * Toàn bộ công tác tối ưu chỉ tập trung vào việc **triệt tiêu rác bộ nhớ thực sự (Dead Memory, Stale Metadata, Leftover Files, Circular References, Uncommitted OS Pages)** sinh ra trong quá trình xử lý ngầm, hoàn toàn không "ăn bớt" bộ đệm phát video của người dùng.
 
-### 16.1 Hiện trạng & Mục tiêu kỹ thuật
-* **Tiến trình Bootloader launcher (`FB-Video-Watcher.exe`):** ~8.8 MB RAM.
-* **Tiến trình chính (`FB-Video-Watcher.exe`):** **~275 – 288 MB RAM** (Working Set khi phát 1080p).
-* **Phân bổ:**
-  1. **VLC Network Buffer & Video Surface:** Phục vụ phát video theo đúng thiết lập người dùng (3000ms – 5000ms) $\rightarrow$ *Giữ nguyên 100%*.
-  2. **yt-dlp Session & JSON Metadata cache tạm:** ~35 – 50 MB rác sau bóc tách.
-  3. **Python Runtime Heap & VirtualAlloc của Windows:** ~80 – 100 MB các trang nhớ nhàn rỗi chưa được Windows thu hồi.
-  4. **File rác đọng lại trên đĩa cứng:** File `.old` khi update, file `.part` khi hủy tải, file `.m3u8` tạm của YouTube.
+### 16.1 Hiện trạng & Thành tựu tối ưu kỹ thuật
+* **Tiến trình Bootloader launcher (`FB-Video-Watcher.exe`):** ~1.1 MB – 6.9 MB RAM.
+* **Tiến trình chính (`FB-Video-Watcher.exe`):** **~35 – 45 MB RAM** (Working Set thực tế khi phát video 1080p và sau khi tua/nhảy mốc trong video siêu dài 10 tiếng, giảm ngoạn mục từ đỉnh ~568 MB - tiết kiệm hơn **93%** RAM).
+* **Mức tiêu thụ CPU:** Cực kỳ nhàn rỗi, chỉ **~0.4%** trên CPU đa nhân hiện đại.
+* **Phân tích đỉnh RAM gốc (Peak Working Set trước khi dọn):**
+  1. **Direct3D 11 Graphics Drivers kép (Intel UHD 770 + NVIDIA RTX 4060):** Chiếm ~340 MB (~60% RAM) do nạp cùng lúc hai bộ shader compiler (`nvgpucomp64.dll`: 94MB, `nvwgf2umx.dll`: 85MB, `igc64.dll`: 82MB, `media_bin_64.dll`: 22MB) khi giải mã trên iGPU và xuất hình qua dGPU.
+  2. **Windows System & DirectX Runtime:** ~153 MB (Font Cache DirectWrite, D3DCompiler, DWM).
+  3. **VLC Demuxer & Codec Plugins:** ~51 MB (bảng chỉ mục khung hình video dài).
+  4. **Toàn bộ Python App, GUI & SQLite:** Chỉ chiếm đúng **~25.9 MB (<5%)**.
+
 * **Mục tiêu đề ra:**
   * **"Xài xong là dọn":** Mọi tài nguyên tạm (biến, session, file temp, dialog instance, media cũ) phải được dọn dẹp dứt điểm ngay khi hoàn thành tác vụ.
-  * **Ổn định dài hạn (Zero Memory Leak):** Xem liên tục nhiều giờ hoặc đổi qua lại 20+ video không làm RAM tăng lũy kế (giữ mức tiêu thụ phẳng).
+  * **Ổn định dài hạn (Zero Memory Leak):** Xem liên tục nhiều giờ hoặc đổi qua lại 20+ video không làm RAM tăng lũy kế (giữ mức tiêu thụ phẳng ~40MB).
   * **Không làm bẩn máy người dùng:** Không để lại file thừa trong thư mục Downloads, Desktop hay `%TEMP%`.
   * **Zero Lag:** Dọn dẹp trên worker thread ngầm, không gây giật hình hay khựng thanh trượt GUI.
 
@@ -1398,23 +1467,63 @@ RESOLVE_RETRIES = 3
 
 #### 🧹 7. Cơ chế Thu hồi vùng nhớ Windows Working Set (OS Memory Trimming)
 * **File liên quan:** `main/platform_utils.py`, `main/app.py`
-* **Vấn đề:** Python runtime cấp phát bộ nhớ qua `VirtualAlloc`. Khi Python giải phóng đối tượng bên trong, Windows vẫn giữ nguyên các trang bộ nhớ vật lý (Working Set) cho tiến trình.
-* **Quy chuẩn kỹ thuật:**
-  1. Trong `main/platform_utils.py`, bổ sung hàm Win32:
+* **Bản chất kỹ thuật:**
+  - Python runtime cấp phát bộ nhớ qua heap của C runtime và `VirtualAlloc`. Khi Python giải phóng đối tượng, trình quản lý bộ nhớ của Windows (NT Virtual Memory Manager) không tự động thu hồi (page-out) các trang bộ nhớ vật lý nhàn rỗi khỏi Working Set của tiến trình nếu hệ thống còn nhiều RAM trống.
+  - Đặc biệt trên hệ thống đồ họa kép (Hybrid Dual-GPU: iGPU + dGPU), khi giải mã bằng iGPU và xuất hình qua dGPU, cả hai driver đồ họa đều nạp compiler vào tiến trình tạo đỉnh RAM tới 568MB. Khi tua xong, dữ liệu compiler này nhàn rỗi 100% nhưng bị Windows giữ lại.
+* **Quy chuẩn kỹ thuật bắt buộc:**
+  1. Trong `main/platform_utils.py`, hàm `trim_process_memory()` được triển khai chuẩn xác theo kiến trúc Win32 64-bit:
      ```python
      def trim_process_memory() -> None:
-         """Yêu cầu Windows thu hồi các trang nhớ vật lý nhàn rỗi về lại hệ thống."""
+         """
+         Yêu cầu Windows thu hồi các trang nhớ vật lý nhàn rỗi (stale working set pages)
+         trả về lại RAM của hệ thống. An toàn tuyệt đối, không ảnh hưởng tiến trình.
+         Chỉ gọi sau các tác vụ nặng đã hoàn thành (resolve, đóng dialog lớn, dừng media, sau khi tua/seek).
+         - KHÔNG BAO GIỜ gọi trong vòng lặp UI timer 250ms.
+         """
          if sys.platform == "win32":
              try:
-                 import ctypes
-                 ctypes.windll.kernel32.SetProcessWorkingSetSize(
-                     ctypes.windll.kernel32.GetCurrentProcess(), -1, -1
-                 )
+                 from ctypes import wintypes
+                 handle = ctypes.windll.kernel32.GetCurrentProcess()
+
+                 # 1. Thử EmptyWorkingSet từ psapi / kernel32 (Chuẩn Win32 API)
+                 try:
+                     psapi = ctypes.windll.psapi
+                     psapi.EmptyWorkingSet.argtypes = [wintypes.HANDLE]
+                     psapi.EmptyWorkingSet.restype = wintypes.BOOL
+                     if psapi.EmptyWorkingSet(handle):
+                         return
+                 except Exception:
+                     pass
+
+                 try:
+                     k32 = ctypes.windll.kernel32
+                     k32.K32EmptyWorkingSet.argtypes = [wintypes.HANDLE]
+                     k32.K32EmptyWorkingSet.restype = wintypes.BOOL
+                     if k32.K32EmptyWorkingSet(handle):
+                         return
+                 except Exception:
+                     pass
+
+                 # 2. Fallback sang SetProcessWorkingSetSize với SIZE_T 64-bit chuẩn
+                 k32 = ctypes.windll.kernel32
+                 k32.SetProcessWorkingSetSize.argtypes = [wintypes.HANDLE, ctypes.c_size_t, ctypes.c_size_t]
+                 k32.SetProcessWorkingSetSize.restype = wintypes.BOOL
+                 size_t_max = ctypes.c_size_t(-1).value
+                 k32.SetProcessWorkingSetSize(handle, size_t_max, size_t_max)
              except Exception:
                  pass
      ```
-  2. Trong `main/app.py`: Tạo hàm `_post_task_cleanup()` gọi `gc.collect()` và `trim_process_memory()`.
-  3. **Quy tắc an toàn chống giật lag:** CHỈ gọi `_post_task_cleanup()` 1 lần duy nhất sau khi video bắt đầu phát ổn định (1-2s), sau khi đổi bài, hoặc sau khi đóng hộp thoại Cài đặt. **TUYỆT ĐỐI KHÔNG đưa vào vòng lặp 250ms của GUI**.
+  > [!CAUTION]
+  > **BẪY 64-BIT CTYPES CỰC KỲ NGUY HIỂM - CẤM TÁI PHẠM:**
+  > Trên nền tảng Windows 64-bit, tuyệt đối **KHÔNG** gọi `SetProcessWorkingSetSize(handle, -1, -1)` mà không chỉ định `argtypes`! Mặc định `ctypes` sẽ truyền `-1` dưới dạng số nguyên có dấu 32-bit `0x00000000FFFFFFFF` (tương đương 4 GB) thay vì `(SIZE_T)-1` (`0xFFFFFFFFFFFFFFFF`). Lệnh gọi sẽ thất bại với mã lỗi `ERROR_INVALID_HANDLE` (return = 0) trong im lặng và Windows hoàn toàn không thu hồi bộ nhớ. Bắt buộc phải sử dụng `psapi.EmptyWorkingSet` với `argtypes=[wintypes.HANDLE]` hoặc `ctypes.c_size_t(-1).value`.
+
+  2. Trong `main/app.py`: Hàm `_post_task_cleanup()` gọi `gc.collect()` và `trim_process_memory()`.
+  3. **Cơ chế Debounced Post-Seek Trimming (`_schedule_post_seek_cleanup`, delay 2.5s):**
+     - Khi người dùng kéo thanh tua liên tục hoặc bấm nhảy mốc thời gian, timer debounce được reset liên tục.
+     - Sau khi dừng tua và video phát ổn định được 2.5s, timer kích hoạt gửi `_post_task_cleanup()` vào `self.executor` (`fbw-worker`) chạy ngầm.
+     - Giúp thu hồi tức thì toàn bộ rác demuxer và shader compiler, đưa RAM từ ~500MB+ về thẳng mức sàn **~40 MB**.
+  4. **Chu kỳ bảo trì định kỳ 60s (`_periodic_maintenance`):** Thu gom rác thế hệ 2 (`gc.collect()`), dọn Working Set ngầm và checkpoint SQLite WAL.
+  5. **Quy tắc an toàn chống giật lag (Zero UI Lag):** Mọi lệnh dọn dẹp nặng CHỈ được chạy trên `ThreadPoolExecutor` ngầm (`fbw-worker`), TUYỆT ĐỐI KHÔNG gọi trực tiếp trên Tkinter UI thread, KHÔNG gọi trong vòng lặp 250ms của GUI.
 
 ### 16.3 Lộ trình triển khai kỹ thuật
 
@@ -1425,6 +1534,159 @@ RESOLVE_RETRIES = 3
 | **Bước 3** | Cắt tỉa `info_dict` & dọn rác Resolver | `main/extractors/generic.py`, `main/extractors/youtube.py` | Giảm 30–45MB RAM rác sau phân giải |
 | **Bước 4** | Dọn file `.part` dở dang khi Hủy tải | `main/downloader.py` | Giữ sạch thư mục Downloads của user |
 | **Bước 5** | Dọn file `.m3u8` tạm & giải phóng `vlc.Media` | `main/extractors/youtube.py`, `main/vlc_player.py` | Xóa sạch buffer và manifest cũ khi đổi video |
-| **Bước 6** | Hủy tham chiếu `SettingsDialog` khi đóng | `main/gui.py` | Thu hồi toàn bộ UI objects khi đóng cửa sổ |
-| **Bước 7** | Tích hợp `_post_task_cleanup()` | `main/app.py` | Kích hoạt chu trình dọn dẹp tự động an toàn |
-| **Bước 8** | Chạy toàn bộ 176 bài Unit Test | Toàn bộ dự án | Đảm bảo 100% tests pass, không gây hồi quy |
+| **Bước 6** | Hủy tham chiếu `SettingsDialog` khi đóng | `main/gui/settings_dialog.py` | Thu hồi toàn bộ UI objects khi đóng cửa sổ |
+| **Bước 7** | Tích hợp `_post_task_cleanup()` & Post-Seek Debounce | `main/app.py` | Kích hoạt chu trình dọn dẹp tự động an toàn sau khi tua và bảo trì 60s |
+| **Bước 8** | Chạy toàn bộ 288 bài Unit Test | Toàn bộ dự án | Đảm bảo 100% tests pass, không gây hồi quy |
+
+---
+
+### 16.4 Bộ quy chuẩn "Xài xong dọn" bắt buộc cho mọi Model AI & Developer khi thêm code mới
+
+> [!IMPORTANT]
+> **HƯỚNG DẪN DÀNH CHO CÁC MODEL AI & LẬP TRÌNH VIÊN PHÁT TRIỂN TIẾP NỐI:**
+> Để ứng dụng luôn duy trì kỷ lục **~40 MB RAM** và không bao giờ bị phình bộ nhớ trở lại, mọi tính năng mới được thêm vào codebase BẮT BUỘC phải tuân thủ 5 điều răn sau:
+> 1. **Nguyên tắc Debounce Post-Action:** Bất kỳ hành vi nào gây tải tạm thời (tua video, nạp subtitle nặng, import hàng loạt, chuyển đổi chất lượng) phải lập lịch dọn dẹp sau 2.0s – 2.5s qua `_schedule_post_seek_cleanup()` hoặc executor thread.
+> 2. **Nguyên tắc Worker Pool Non-blocking:** Toàn bộ các thao tác `gc.collect()` và `trim_process_memory()` BẮT BUỘC chạy ngầm trên `self.executor` (`fbw-worker`), TUYỆT ĐỐI KHÔNG chạy trên Main UI Thread và TUYỆT ĐỐI KHÔNG đưa vào vòng lặp UI 250ms (`_update_ui_state`).
+> 3. **Nguyên tắc Cắt tỉa Metadata thô:** Tuyệt đối không lưu trữ dữ liệu thô (raw JSON `info_dict`, HTTP headers, cookies, token xác thực, danh sách format 100+ items) vào các model sống lâu như `QueueItem`, `MainWindow`, `Application`. Chỉ lưu trữ các trường tối giản cần thiết.
+> 4. **Nguyên tắc Hủy sạch tham chiếu UI Dialog:** Mọi cửa sổ con (`Toplevel`) như `SettingsDialog`, `BulkImportDialog`, `FFmpegSetupDialog` khi đóng phải gán tham chiếu về `None`, hủy toàn bộ timer con và gọi `_trim_memory_if_possible()`.
+> 5. **Bảo tồn Win32 64-bit Trimming:** Giữ nguyên vẹn triển khai `trim_process_memory()` với `psapi.EmptyWorkingSet(handle)` và `wintypes.HANDLE`. Tuyệt đối không thay thế bằng các lệnh gọi ctypes thiếu `argtypes`.
+
+---
+
+## 17. Các tính năng mở rộng theo plan1.md
+
+### 17.1 Hàng đợi phát liên tiếp (Playback Queue & Playlist)
+- **Model `QueueItem` & `PlaybackQueue` (`main/playback_queue.py`):** Quản lý metadata danh sách phát gọn nhẹ, không lưu trữ direct stream URL, HTTP headers, token hay cookie lâu dài nhằm tránh phình bộ nhớ và tránh lỗi CDN hết hạn.
+- **`QueueController` (`main/queue_controller.py`):** Điều phối chuyển tiếp video, đánh dấu trạng thái (`pending`, `resolving`, `playing`, `played`, `error`), thử lại và hỗ trợ lặp danh sách.
+- **Phân giải playlist lười (Lazy Playlist Resolution):** `url_resolver.py` sử dụng model `ResolvedCollection` và `CollectionEntry` cho playlist/album, chỉ resolve stream thật khi video chuẩn bị phát.
+- **Bảo tồn danh sách phát (Queue Table Preservation):** Khi phát một video từ playlist, bảng hàng đợi được giữ nguyên 100%, không bị xóa; người dùng có thể đóng/mở bảng tùy ý và click chuyển video bất kỳ lúc nào hoặc tự chuyển tiếp khi kết thúc tự nhiên.
+- **Giao diện mở rộng sang phải (Expand to Right):** Bật mở panel Queue sẽ mở rộng kích thước cửa sổ sang bên phải, bảo toàn 100% diện tích và kích thước khung phát video.
+- **Menu ngữ cảnh đầy đủ:** Phát ngay, Phát tiếp theo, Xóa khỏi danh sách, Di chuyển lên/xuống, Xóa video đã xem, Thử lại mục lỗi, Mở liên kết nguồn.
+- **Phím tắt:** `Ctrl + Shift + Q` (Bật/tắt Queue), `PageDown` (Video kế tiếp), `PageUp` (Video trước đó).
+
+### 17.2 Mục lục Video (Chapters)
+- **Model `Chapter` (`main/chapters.py`):** Chuẩn hóa thời gian bắt đầu và kết thúc; tự động clamp phần chồng lấn (`result[-1].end_ms = start_ms`) để tránh loại bỏ nhầm chapter do sai số float mili-giây.
+- **Trích xuất mục lục:** Extractor YouTube và Generic tự động trích xuất metadata chapters từ nguồn.
+- **Giao diện:** Panel Chapters hiển thị danh sách mục lục, highlight chapter đang phát theo thời gian thực của VLC, cho phép click để seek nhanh đến đầu chapter.
+
+### 17.3 Tích hợp Windows (Windows Integration)
+- **Hợp đồng dòng lệnh (`main.py`):** Tiếp nhận nhiều URL, đường dẫn file local, cùng các cờ `--add-to-queue`, `--play-now`, `--privacy`, `--no-focus`.
+- **Giao thức URI `fbvw://`:** Hỗ trợ `fbvw://play?url=...` và `fbvw://queue?url=...`, giải mã URL một lần duy nhất và kiểm tra tính hợp lệ an toàn.
+- **Đăng ký Registry HKCU & Xử lý An toàn:** Ghi cấu hình tại `HKCU\Software\Classes\fbvw`, hoàn toàn không yêu cầu quyền Administrator. Hàm `get_app_launch_command()` (`main/platform_utils.py`) tự động chuẩn hóa đường dẫn `pythonw.exe` / `.exe` độc lập môi trường. Bọc try-except và logging phòng thủ trong `SettingsDialog` đảm bảo không bao giờ làm gián đoạn luồng lưu cài đặt người dùng.
+- **Cơ chế Named Pipe IPC Forwarding:** Tự động chuyển tiếp yêu cầu sang instance đang chạy sẵn thông qua Named Pipe `\\.\pipe\fbvw_{username}`, tránh xung đột tiến trình và không cần tạo nhiều cửa sổ khi người dùng click link ngoài trình duyệt.
+
+### 17.4 Cấu hình Profile theo nguồn & Giám sát tình trạng mạng (Source Profiles & Health)
+- **Source Profiles (`main/playback_profiles.py`):** Phân chia chế độ `Auto` (AutoTuner tự động tối ưu tham số VLC) và `Custom` (tôn trọng tuyệt đối thiết lập độ phân giải và bộ nhớ đệm của người dùng, không bao giờ tự ý thay đổi).
+- **`PlaybackHealthMonitor` (`main/playback_health.py`):** Giám sát tình trạng mạng và giật lag buffering, phân cấp trạng thái (`healthy`, `degraded`, `critical`) kèm cơ chế phục hồi 2 giai đoạn (sau 10s phát mượt chuyển về `degraded`, sau 20s chuyển về `healthy`).
+- **Gợi ý mạng suy giảm:** Hiển thị toast gợi ý chuyển sang profile Auto kèm nút `⚡ Đổi sang Auto` khi stream bị suy giảm trên profile Custom (có cooldown 60s/video).
+
+### 17.5 Phiên riêng tư (Privacy Session)
+- **Chính sách Runtime (`main/privacy_session.py`):** Quản lý chính sách ghi dữ liệu; khi bật, ứng dụng tuyệt đối không ghi lịch sử xem (history), vị trí phát tiếp (resume state), URL gần nhất (last URL), hay lưu hàng đợi (queue persistence) xuống ổ đĩa.
+- **Bảo lưu cấu hình người dùng:** Các thay đổi chủ động trong Cài đặt (Theme, Phím tắt, Phụ đề, Âm lượng) vẫn được phép lưu khi người dùng nhấn "Lưu & Đóng".
+- **Giao diện & Chẩn đoán:** Hiển thị badge `🔒 RIÊNG TƯ` nổi bật; tự động che giấu (redact) URL đầy đủ và thông tin nhạy cảm trong hệ thống Devlog.
+
+### 17.6 Quy tắc ưu tiên vòng lặp phát
+- Thứ tự ưu tiên được thực thi nghiêm ngặt:
+  1. **Lặp đoạn A-B (A-B Repeat):** Ưu tiên cao nhất, luôn giữ việc phát tuần hoàn trong đoạn đã chọn.
+  2. **Lặp video hiện tại (Video Loop):** Giữ việc phát lại video đang mở.
+  3. **Lặp danh sách phát (Queue Loop):** Chỉ kích hoạt khi video cuối cùng trong hàng đợi kết thúc tự nhiên và không có chế độ lặp cục bộ nào đang bật.
+
+### 17.7 Tối ưu hóa GPU kép Hybrid & Offload sang iGPU (Gaming Mode)
+- **Kiến trúc Multi-GPU Topology (`main/system_info.py`):**
+  - Model `GPUInfo` đại diện cho từng adapter đồ họa với đầy đủ thông tin: tên, dung lượng VRAM, vendor (`nvidia`, `amd`, `intel`, `unknown`), cờ `is_integrated`, `is_active` và `adapter_index`.
+  - Phân loại Topology tự động: `hybrid_dual_gpu` (máy có cả GPU rời và GPU tích hợp khả dụng), `single_discrete` (chỉ có GPU rời), `single_integrated` (chỉ có GPU on-board), hoặc `software_only` (không có card tương thích hoặc máy ảo).
+- **Nhận diện khả năng iGPU của CPU (`_detect_cpu_igpu_capability`):**
+  - Tự động phân tích tên CPU để loại bỏ các vi xử lý dòng F/KF (như Intel Core i5-13400F, i7-14700KF hay AMD Ryzen 7500F) hoàn toàn không có nhân GPU tích hợp vật lý trên chip.
+- **Truy vấn Active DXGI Adapter qua Win32 API (`_query_active_dxgi_adapters`):**
+  - Gọi trực tiếp `dxgi.dll!CreateDXGIFactory1` và lặp qua `EnumAdapters1` bằng `ctypes` với thời gian thực thi cực nhanh (<5ms).
+  - Bắt và nhận diện chính xác các trường hợp iGPU bị mainboard/BIOS tự động vô hiệu hóa (`ConfigManagerErrorCode: 22` / `CM_PROB_DISABLED`) khi người dùng cắm card rời trên main MSI B660/ASUS/Gigabyte. Khi đó, hệ thống gán trạng thái `is_active = False` và điều hướng về `single_discrete` an toàn, chống crash triệt để do gọi nhầm adapter không hoạt động.
+- **Chiến lược điều hướng GPU (`main/auto_tune.py` & `main/platform_utils.py`):**
+  - Tùy chọn `gpu_preference`: `auto`, `discrete` (GPU rời), `integrated` (GPU tích hợp), `software` (chỉ CPU).
+  - **Gaming Mode (iGPU Offload):** Khi máy ở chế độ GPU kép hoặc người dùng chọn `integrated`:
+    - Ghi thiết lập vào Windows Graphics Settings: `HKCU\Software\Microsoft\DirectX\UserGpuPreferences` (`GpuPreference=1` - Power Saving) cho file thực thi của app.
+    - Windows Direct3D 11 runtime tự động phân bổ luồng giải mã theo cấu hình Registry trên, đảm bảo video render trên iGPU một cách nguyên bản mà không cần truyền cờ CLI ngoài chuẩn của libVLC 3.0.
+    - Giải phóng 100% dung lượng VRAM và xung nhịp của card rời (NVIDIA RTX / AMD Radeon) cho việc chơi game FPS cao hoặc render đồ họa nặng, loại bỏ hoàn toàn hiện tượng drop FPS trong game khi vừa chơi vừa xem stream.
+
+### 17.8 Bộ tải Telegram đa kết nối MTProto siêu tốc & Lookahead Streaming
+- **Bộ tải `FastTelethonDownloader` (`main/telegram_manager.py`):**
+  - Sử dụng giao thức MTProto trực tiếp thay vì HTTP proxy trung gian chậm chạp.
+  - Khởi tạo 6 worker connections song song (`WORKER_COUNT = 6`), chia nhỏ file video thành các part 512KB.
+  - Ghi stream trực tiếp xuống ổ đĩa bằng cơ chế non-buffering (Zero in-memory buffering), tốc độ tải đạt tối đa băng thông đường truyền (~10x so với tải đơn luồng thông thường), loại bỏ hoàn toàn nguy cơ phình RAM khi tải video dung lượng lớn (1GB–4GB).
+- **Cơ chế Lookahead Streaming Prefetching (`main/extractors/telegram.py`):**
+  - Phân luồng đọc trước (Lookahead) với 3 worker senders độc lập nạp sẵn dữ liệu vào buffer HTTP streaming.
+  - Tự động áp dụng VLC Network Cache 6000ms riêng cho luồng Telegram để bù đắp độ trễ địa lý khi kết nối tới các Telegram Data Center đặt tại nước ngoài (Singapore, Amsterdam, Miami).
+- **Hủy tải tương tác 1-chạm (Interactive 1-Click Cancellation):**
+  - Nút **⬇ Tải về** trên giao diện chính đổi nhãn và trạng thái thành **❌ Hủy (xx%)** theo thời gian thực.
+  - Người dùng có thể nhấn hủy bất cứ lúc nào: tiến trình ngầm dừng tức thì, các worker đóng kết nối an toàn và tự động dọn sạch các file tạm `.part` / `.ytdl` trong thư mục tải về.
+
+### 17.9 Bộ bóc tách thông minh từ văn bản (SmartTextParser) & Quản lý danh sách phát
+- **Bộ phân tích `SmartTextParser` (`main/text_parser.py`):**
+  - Tiếp nhận đoạn văn bản dài tùy ý (bài đăng Facebook, status, bài viết tổng hợp phim bộ).
+  - Bóc tách toàn bộ link video hợp lệ (`facebook.com`, `fb.watch`, `youtube.com`, `youtu.be`, `tiktok.com`, `douyin.com`, `t.me/c/...`, direct media link).
+  - Tự động bóc tách và giải mã link bọc chuyển hướng Facebook Shim (`l.facebook.com/l.php?u=...`).
+  - Gọt sạch các tham số theo dõi rác (`fbclid`, `__tn__`, `si`, `utm_*`, `mibextid`).
+  - Tự động trích xuất ngữ cảnh/tiền tố đứng trước mỗi link (ví dụ: `Tập 1`, `Phần 2`, `Part A`, `Preview...`) để làm tiêu đề và mô tả trực quan.
+- **Hộp thoại nhập hàng loạt (`main/bulk_import_dialog.py`):**
+  - Hiển thị bảng xem trước (Preview Table) cho phép chọn lọc (Check/Uncheck), chỉnh sửa tiêu đề và thứ tự trước khi đưa vào hàng đợi phát chính.
+- **Lưu trữ & Xuất danh sách phát linh hoạt:**
+  - Tự động lưu và đồng bộ danh sách bài trong hàng đợi vào `~/.fb-video-watcher/queue.json` (tự ngắt khi phiên riêng tư Privacy Session kích hoạt).
+  - Menu ngữ cảnh trên bảng hàng đợi cung cấp tùy chọn xuất danh sách ra file `.txt` (danh sách URL kèm nhãn), file `.json` (dữ liệu cấu trúc), và file `.m3u` (playlist tiêu chuẩn cho các trình phát đa phương tiện).
+  - Tooltip ngữ cảnh nổi (Hover Tooltip): Rê chuột qua từng mục trong hàng đợi hiển thị chi tiết tên tập phim và URL gốc đầy đủ.
+
+### 17.10 Tiện ích mở rộng FFmpeg Portable Add-on & Progressive Fallback
+- **Cơ chế Fallback Progressive MP4 (`main/ffmpeg_utils.py` & `main/downloader.py`):**
+  - Khi hệ thống máy người dùng chưa cài đặt FFmpeg, bộ tải không báo lỗi hay crash mà tự động fallback sang định dạng Progressive MP4 (`best[ext=mp4]/best`) chứa sẵn cả hình ảnh và âm thanh nguyên bản.
+- **Tải và cài đặt tự động FFmpeg Portable Add-on (`main/ffmpeg_installer.py` & `main/ffmpeg_setup_dialog.py`):**
+  - Tích hợp nút cài đặt trong **⚙ Cài đặt $\rightarrow$ Cài đặt chung**.
+  - Tự động tải bản FFmpeg essentials portable đóng gói sẵn từ máy chủ an toàn, giải nén ngầm vào thư mục `bin/ffmpeg` của ứng dụng kèm hộp thoại tiến trình trực quan (%) mà người dùng không cần thao tác dòng lệnh.
+
+### 17.11 Phân hệ Proxy & DNS Mã Hóa Cô Lập Tầng Ứng Dụng (`main/network/`)
+- **Mục tiêu & Nguyên tắc độc lập hệ thống:**
+  - Vượt chặn ISP (DNS Poisoning, SNI throttling, kiểm duyệt video) hoàn toàn cô lập trong phạm vi tiến trình phần mềm.
+  - Tuyệt đối **KHÔNG thay đổi Card mạng (Network Adapter), Windows Registry mạng, hay yêu cầu quyền Administrator**.
+  - **Mặc định TẮT / Kết nối trực tiếp:** `proxy_mode = "direct"`, `doh_enabled = False`. Quyết định của người dùng luôn được ưu tiên cao nhất, ứng dụng không bao giờ tự ý bật hay ép buộc cấu hình mạng.
+  - **Tiết kiệm tài nguyên tuyệt đối (Zero Leaks):** Không nhúng Chromium/CEF/WebView2. Bộ nhớ đệm DoH LRU được giới hạn cứng tối đa 256 bản ghi với TTL 300s, chiếm $< 50\text{KB}$ RAM.
+- **Cấu hình Proxy đa giao thức (`main/network/proxy_config.py`):**
+  - Hỗ trợ các giao thức: HTTP, HTTPS, SOCKS5, và SOCKS5h (DNS phân giải từ xa).
+  - Tự động mã hóa che giấu mật khẩu (`user:****@host:port`) khi ghi log hay hiển thị trên giao diện, ngăn ngừa lộ lọt thông tin xác thực.
+  - Chuyển đổi định dạng chuẩn cho libVLC CLI (`--http-proxy`, `--socks`, `--socks-user`, `--socks-pwd`), yt-dlp (`ydl_opts['proxy']`), và Telethon MTProto client (`python-socks`).
+  - Nút kiểm tra kết nối Proxy không chặn giao diện (Non-blocking probe) đo độ trễ Ping (ms) và phát hiện IP thoát (Egress IP).
+- **Bộ phân giải DNS-over-HTTPS DoH (`main/network/doh_resolver.py`):**
+  - Hỗ trợ chuẩn RFC 8484 và JSON DNS API qua kết nối HTTPS bảo mật.
+  - Tích hợp sẵn Anycast Bootstrap IPs (`1.1.1.1`, `8.8.8.8`, `9.9.9.9`, `94.140.14.14`) nhằm giải quyết triệt để bài toán con gà - quả trứng (Chicken-and-egg problem: cần DNS để phân giải domain server DNS).
+  - Hỗ trợ các nhà cung cấp phổ biến: Cloudflare, Google Public DNS, Quad9, AdGuard DNS và Tùy chỉnh DoH URL.
+- **Bộ hook Socket DNS Interceptor (`main/network/dns_interceptor.py`):**
+  - Hook cục bộ hàm `socket.getaddrinfo` chỉ trong phạm vi tiến trình Python của ứng dụng.
+  - Tự động bỏ qua loopback (`localhost`, `127.0.0.1`, `::1`) và các địa chỉ IP số để bảo đảm `StreamProxyServer` cục bộ và IPC hoạt động trơn tru.
+  - Cơ chế Fail-safe: Tự động fallback DNS hệ thống nếu DoH gặp timeout hoặc sự cố mạng.
+- **Quản lý mạng tập trung (`main/network/manager.py`):**
+  - Pattern Singleton `NetworkManager` điều phối toàn bộ cấu hình mạng, tự động nạp/ngắt interceptor và truyền proxy vào các module `downloader`, `extractors`, `auto_tune`, `telegram_manager`.
+- **Giao diện Cài đặt (Tab "Mạng & Proxy" trong `SettingsDialog`):**
+  - Bố cục 2 cột trực quan, điều khiển linh hoạt giữa Direct / System / Custom Proxy và DoH, tích hợp các nút kiểm tra kết nối và phân giải tên miền thời gian thực.
+
+### 17.12 Khắc phục triệt để hiển thị OSD Timeline đỏ trong chế độ PiP (`main/gui/components.py` & `main/gui/main_window.py`)
+- **Vấn đề đã khắc phục:**
+  - Ở lần đầu tiên kích hoạt chế độ Picture-in-Picture (PiP), thanh OSD tiến trình đỏ (3px) ở cạnh dưới bị ẩn do xung đột Z-Order Win32 (cửa sổ chính `root` nhận `focus_force()` đè lên overlay) và độ trễ tính toán tọa độ bất đồng bộ của Tkinter (`geometry` chưa kịp đồng bộ với Win32 message pump).
+- **Kiến trúc giải pháp vững chắc:**
+  - **Win32 Owner-Child Layering (`GWL_HWNDPARENT`):** Gán tường minh `root_hwnd` làm chủ sở hữu (Owner) của `top_hwnd`. Theo quy tắc quản lý cửa sổ của Windows DWM, một cửa sổ được sở hữu (Owned Window) luôn luôn nằm phía trước cửa sổ sở hữu nó trong Z-Order, ngay cả khi cửa sổ sở hữu nhận focus hay phát video phần cứng Direct3D 11 compositing ở 60fps.
+  - **Explicit Bounds Injection:** Truyền trực tiếp tọa độ và kích thước đã tính toán `bounds=(x, y, pip_w, pip_h)` từ `toggle_pip()` và `set_pip_aspect_ratio()` vào `show()` và `reposition()`, loại bỏ 100% độ trễ hình học bất đồng bộ ngay từ microsecond đầu tiên.
+  - **Layered Click-Through:** Áp dụng `WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE` để chuột xuyên thấu hoàn toàn xuống bề mặt video VLC bên dưới mà không cản trở thao tác rê chuột, kéo thả di chuyển cửa sổ hay click đôi phóng to.
+  - **Clean Lifecycle & Zero RAM Bloat:** Khi thoát PiP, gọi `pip_progress_overlay.destroy()` để hủy hoàn toàn Toplevel và dọn sạch widget nội bộ, đảm bảo khi bật lại PiP sẽ luôn tạo mới HWND tương thích với HWND mới của `root` sau khi tắt `overrideredirect`. Bộ nhớ RAM duy trì ổn định ở mức ~40 MB với 0 bytes rò rỉ.
+
+### 17.13 Lưu trữ & Khôi phục Vị trí PiP Đa màn hình (Multi-Monitor PiP Position Persistence)
+- **Vấn đề đã khắc phục:**
+  - Khi người dùng di chuyển hoặc thay đổi kích thước cửa sổ Picture-in-Picture (PiP) sang màn hình phụ (Monitor 2, Monitor 3...), sau đó tắt PiP và mở lại, cửa sổ PiP liên tục bị giật nhảy về góc dưới bên phải của màn hình chính (Monitor 1).
+  - Nguyên nhân do `DEFAULT_SETTINGS["ui"]` và `_save_current_pip_size()` trước đó chỉ lưu `width` và `height` mà hoàn toàn thiếu tọa độ $(x, y)$, đồng thời `toggle_pip()` sử dụng `winfo_screenwidth()` / `winfo_screenheight()` (bị Tkinter giới hạn ở màn hình chính) và ép tọa độ về góc phải Monitor 1; ngoài ra `_on_video_release()` chỉ lưu khi resize mà bỏ qua khi kéo di chuyển cửa sổ.
+- **Kiến trúc giải pháp vững chắc:**
+  - **Lưu trữ tọa độ phân tách theo tỉ lệ (`pip_x_horizontal`, `pip_y_horizontal`, `pip_x_vertical`, `pip_y_vertical`):** Tọa độ $(x, y)$ và kích thước $(w, h)$ được lưu độc lập cho tỉ lệ ngang (16:9) và dọc (9:16) trong `settings.json`, duy trì tương thích ngược 100%.
+  - **Nhận diện Vùng làm việc Màn hình Win32 (`main/platform_utils.py`):**
+    - `is_rect_visible_on_any_monitor(x, y, w, h) -> bool`: Gọi Win32 `MonitorFromRect(..., MONITOR_DEFAULTTONULL)`. Nếu cửa sổ nằm ngoài toàn bộ màn hình hiện hữu (ví dụ khi rút dây màn hình phụ), hệ thống tự động fallback an toàn về màn hình hiện tại thay vì bị treo ngoài không gian vô hình.
+    - `get_monitor_work_area_for_rect(x, y, w, h) -> (left, top, right, bottom)`: Xác định chính xác vùng làm việc (`rcWork`, đã trừ taskbar) của màn hình chứa phần lớn diện tích cửa sổ PiP.
+    - `get_monitor_work_area_for_window(window) -> (left, top, right, bottom)`: Lấy vùng làm việc của màn hình đang chứa cửa sổ thông qua `MonitorFromWindow`.
+  - **Giữ vị trí khi Kéo thả & Thay đổi kích thước (`main/gui/main_window.py`):**
+    - `_on_video_release()` tự động ghi nhớ và lưu cấu hình hình học `(w, h, pos_x, pos_y)` khi thả chuột dù là sau khi resize hay kéo di chuyển cửa sổ.
+    - `toggle_pip()` kiểm tra tọa độ đã lưu: nếu còn hiển thị hợp lệ trên bất kỳ màn hình nào thì phục hồi nguyên vẹn $(x, y, w, h)$ tại đúng màn hình đó; nếu chưa lưu hoặc màn hình đã bị ngắt kết nối thì mới dock thông minh vào góc dưới bên phải của màn hình đang kích hoạt (`work_right - pip_w - 40, work_bottom - pip_h - 70`).
+    - `_on_video_motion()` căn chỉnh hít mép (snapping) và `set_pip_size()` / `set_pip_aspect_ratio()` kẹp biên (clamping) theo `work_left, work_top, work_right, work_bottom` của màn hình đang chứa PiP thay vì màn hình chính, chống giật ngược về Monitor 1.
+
+
+

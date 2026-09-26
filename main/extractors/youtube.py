@@ -31,6 +31,7 @@ from main.extractors.base import (
     get_js_runtimes,
     isolated_cookie_file,
 )
+from main.ffmpeg_utils import YtDlpLogFilter
 
 logger = logging.getLogger("FBVideoWatcher.Extractors.YouTube")
 
@@ -155,6 +156,7 @@ class YouTubeExtractor(BaseExtractor):
             "playlistend": page_size + 1,
             "socket_timeout": timeout,
             "ignoreerrors": True,
+            "logger": YtDlpLogFilter(),
         }
         js_runtimes = get_js_runtimes()
         if js_runtimes:
@@ -244,6 +246,7 @@ class YouTubeExtractor(BaseExtractor):
             "extract_flat": False,
             "socket_timeout": timeout,
             "retries": retries,
+            "logger": YtDlpLogFilter(),
         }
 
         js_runtimes = get_js_runtimes()
@@ -251,6 +254,15 @@ class YouTubeExtractor(BaseExtractor):
             ydl_opts["js_runtimes"] = js_runtimes
 
         ydl_opts["remote_components"] = ["ejs:github"]
+
+        # In-App Proxy integration
+        try:
+            from main.network import NetworkManager
+            proxy_url = NetworkManager.get_instance().get_proxy_url()
+            if proxy_url:
+                ydl_opts["proxy"] = proxy_url
+        except Exception:
+            pass
 
         with isolated_cookie_file(cookie_file) as safe_cookie:
             if safe_cookie:

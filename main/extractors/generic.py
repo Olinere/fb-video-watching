@@ -11,6 +11,7 @@ import urllib.parse
 from typing import Optional, List, Dict, Any
 
 from main.constants import FAKE_USER_AGENT
+from main.chapters import normalize_chapters
 from main.extractors.base import (
     BaseExtractor,
     ResolvedVideo,
@@ -22,6 +23,7 @@ from main.extractors.base import (
     get_js_runtimes,
     isolated_cookie_file,
 )
+from main.ffmpeg_utils import YtDlpLogFilter
 
 logger = logging.getLogger("FBVideoWatcher.Extractors.Generic")
 
@@ -63,6 +65,7 @@ class GenericExtractor(BaseExtractor):
             "extract_flat": False,
             "socket_timeout": timeout,
             "retries": retries,
+            "logger": YtDlpLogFilter(),
             "http_headers": {
                 "User-Agent": FAKE_USER_AGENT,
             },
@@ -73,6 +76,15 @@ class GenericExtractor(BaseExtractor):
             ydl_opts["js_runtimes"] = js_runtimes
 
         ydl_opts["remote_components"] = ["ejs:github"]
+
+        # In-App Proxy integration
+        try:
+            from main.network import NetworkManager
+            proxy_url = NetworkManager.get_instance().get_proxy_url()
+            if proxy_url:
+                ydl_opts["proxy"] = proxy_url
+        except Exception:
+            pass
 
         with isolated_cookie_file(cookie_file) as safe_cookie:
             if safe_cookie:
@@ -225,6 +237,11 @@ class GenericExtractor(BaseExtractor):
         duration = info.get("duration")
         thumbnail = info.get("thumbnail")
         is_live = bool(info.get("is_live", False))
+        duration_ms = int(float(duration) * 1000) if duration is not None else None
+        chapters = normalize_chapters(info.get("chapters"), duration_ms)
+        content_id = str(info.get("id") or "").strip() or None
+        canonical_url = info.get("webpage_url") or info.get("original_url") or url
+        source_name = str(info.get("extractor_key") or info.get("extractor") or "generic").lower()
 
         formats_list: List[Format] = []
         for f in formats_raw:
@@ -259,4 +276,8 @@ class GenericExtractor(BaseExtractor):
             formats=formats_list,
             audio_url=audio_url,
             http_headers=http_headers,
+            chapters=chapters,
+            content_id=content_id,
+            source_name=source_name,
+            canonical_url=canonical_url,
         )

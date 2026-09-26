@@ -84,6 +84,66 @@ class TestPlatformUtils(unittest.TestCase):
         finally:
             root.destroy()
 
+    def test_apply_window_icon(self):
+        """Test apply_window_icon sets icons without raising exceptions."""
+        import tkinter as tk
+        from main.platform_utils import apply_window_icon
+        from main.constants import ICON_FILE
+
+        root = tk.Tk()
+        try:
+            root.withdraw()
+            apply_window_icon(root, ICON_FILE)
+            root.deiconify()
+            apply_window_icon(root, ICON_FILE)
+        finally:
+            root.destroy()
+
+    def test_trim_process_memory(self):
+        """Test Win32 process working set trimming."""
+        from main.platform_utils import trim_process_memory
+        # Must execute cleanly without exceptions
+        trim_process_memory()
+
+    def test_get_app_launch_command(self):
+        """Test get_app_launch_command returns a valid formatted command string."""
+        from main.platform_utils import get_app_launch_command
+        cmd = get_app_launch_command()
+        self.assertIsInstance(cmd, str)
+        self.assertTrue(cmd.endswith('"%1"'))
+        self.assertTrue(cmd.startswith('"'))
+
+    def test_fbvw_protocol_registration_lifecycle(self):
+        """Test register, check status, and unregister fbvw protocol."""
+        from main.platform_utils import (
+            register_fbvw_protocol,
+            unregister_fbvw_protocol,
+            is_fbvw_protocol_registered,
+        )
+        if sys.platform != "win32":
+            self.assertFalse(register_fbvw_protocol())
+            self.assertFalse(is_fbvw_protocol_registered())
+            return
+
+        initial_state = is_fbvw_protocol_registered()
+        try:
+            # Register
+            reg_ok = register_fbvw_protocol()
+            self.assertTrue(reg_ok)
+            self.assertTrue(is_fbvw_protocol_registered())
+
+            # Unregister
+            unreg_ok = unregister_fbvw_protocol()
+            self.assertTrue(unreg_ok)
+            self.assertFalse(is_fbvw_protocol_registered())
+        finally:
+            # Restore initial state if it was originally registered
+            if initial_state:
+                register_fbvw_protocol()
+            else:
+                unregister_fbvw_protocol()
+
 
 if __name__ == "__main__":
     unittest.main()
+

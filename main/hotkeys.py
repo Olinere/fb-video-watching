@@ -29,6 +29,8 @@ DEFAULT_HOTKEYS: Dict[str, str] = {
     "settings": "Ctrl+,",
     "devlog": "F12; Ctrl+Shift+D",
     "queue": "Ctrl+Shift+Q",
+    "next_track": "PageDown",
+    "previous_track": "PageUp",
 }
 
 HOTKEY_DEFINITIONS: List[Tuple[str, str, str, str]] = [
@@ -42,6 +44,8 @@ HOTKEY_DEFINITIONS: List[Tuple[str, str, str, str]] = [
     ("speed_up", "Tăng tốc độ phát", "🎬 Phát & Tua video", "]"),
     ("toggle_loop", "Bật / Tắt lặp lại video", "🎬 Phát & Tua video", "Ctrl+L"),
     ("toggle_ab_repeat", "Lặp đoạn A-B (Đặt A / B / Tắt)", "🎬 Phát & Tua video", "Ctrl+B"),
+    ("next_track", "Video kế tiếp trong danh sách", "🎬 Phát & Tua video", "PageDown"),
+    ("previous_track", "Video trước đó trong danh sách", "🎬 Phát & Tua video", "PageUp"),
 
     ("volume_up", "Tăng âm lượng (+5%)", "🔊 Âm thanh & Màn hình", "Up"),
     ("volume_down", "Giảm âm lượng (-5%)", "🔊 Âm thanh & Màn hình", "Down"),

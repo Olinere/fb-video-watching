@@ -30,6 +30,7 @@ class QueueItem:
     position: int = 0
     error_message: Optional[str] = None
     privacy_only: bool = False
+    description: Optional[str] = None
 
     def __post_init__(self) -> None:
         self.source_url = str(self.source_url).strip()
@@ -59,6 +60,7 @@ class QueueItem:
             "position": self.position,
             "error_message": self.error_message,
             "privacy_only": self.privacy_only,
+            "description": self.description,
         }
 
     @classmethod
@@ -87,6 +89,7 @@ class QueueItem:
             position=int(data.get("position", 0)),
             error_message=data.get("error_message"),
             privacy_only=bool(data.get("privacy_only", False)),
+            description=data.get("description"),
         )
 
 
@@ -104,6 +107,24 @@ class PlaybackQueue:
     def current_id(self) -> Optional[str]:
         with self._lock:
             return self._current_id
+
+    @property
+    def items(self) -> list[QueueItem]:
+        with self._lock:
+            return list(self._items)
+
+    def get(self, queue_id: str) -> Optional[QueueItem]:
+        with self._lock:
+            return next((item for item in self._items if item.queue_id == queue_id), None)
+
+    def clear_played(self) -> int:
+        with self._lock:
+            initial = len(self._items)
+            self._items = [it for it in self._items if it.status != "played"]
+            if self._current_id and not any(it.queue_id == self._current_id for it in self._items):
+                self._current_id = None
+            self._renumber()
+            return initial - len(self._items)
 
     def __len__(self) -> int:
         with self._lock:
@@ -196,7 +217,7 @@ class PlaybackQueue:
                 return False
             item.status = status
             item.error_message = error if status == "error" else None
-            if status == "playing":
+            if status in ("playing", "resolving"):
                 self._current_id = queue_id
             return True
 

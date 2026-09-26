@@ -56,13 +56,53 @@ class AutoTuner:
         else:
             return 6
 
+    def recommend_gpu_preference(self) -> str:
+        """
+        Recommend GPU allocation strategy based on user settings and detected hardware topology.
+        Returns:
+            - "power_saving": Route video to iGPU in CPU (Intel QuickSync / AMD VCN) to reserve 100% of dGPU for gaming/3D.
+            - "high_performance": Route to discrete dGPU (e.g. single dGPU systems, or user explicit choice).
+            - "default": System default.
+            - "software": Disable hardware decoding.
+        """
+        perf = self.user_settings.get("performance", {})
+        if not isinstance(perf, dict):
+            perf = {}
+
+        user_pref = perf.get("gpu_preference", "auto")
+        if user_pref == "integrated":
+            return "power_saving"
+        elif user_pref == "discrete":
+            return "high_performance"
+        elif user_pref == "software":
+            return "software"
+
+        # "auto" mode:
+        # If hybrid dual-GPU is active and operational with iGPU -> use iGPU to free discrete card for gaming!
+        if (
+            getattr(self.sys_info, "gpu_topology", "") == "hybrid_dual_gpu"
+            and getattr(self.sys_info, "cpu_has_igpu", True)
+            and getattr(self.sys_info, "integrated_gpu_name", None)
+            and not "Tắt" in str(self.sys_info.integrated_gpu_name)
+        ):
+            return "power_saving"
+
+        if getattr(self.sys_info, "gpu_topology", "") == "single_discrete":
+            return "high_performance"
+
+        return "default"
+
     def recommend_hw_accel(self) -> Optional[str]:
         """
         Choose hardware acceleration method tailored to the detected GPU and OS.
-        - Windows 10+ with NVIDIA / AMD / Intel GPU -> 'd3d11va' (modern DirectX 11)
+        - Windows 10+ with recognized GPU -> 'd3d11va' (modern DirectX 11)
         - Older Windows with recognized GPU -> 'dxva2' (DirectX 9 fallback)
         - Unknown/Integrated fallback -> None (software decoding)
         """
+        perf = self.user_settings.get("performance", {})
+        if isinstance(perf, dict) and perf.get("gpu_preference") == "software":
+            return None
+
         vendor = self.sys_info.gpu_vendor
         os_name = self.sys_info.os_name
         os_ver = self.sys_info.os_version
@@ -142,8 +182,12 @@ class AutoTuner:
         args.append(f"--file-caching={max(cache // 2, 1000)}")
         args.append(f"--live-caching={cache}")
 
-        # 2. Hardware Acceleration
+        # 2. Hardware Acceleration & Smart GPU Adapter
         hw_enabled = streaming_cfg.get("hardware_decode", True)
+        gpu_pref = self.recommend_gpu_preference()
+        if gpu_pref == "software":
+            hw_enabled = False
+
         if hw_enabled:
             hw_method = streaming_cfg.get("hw_accel")
             if not hw_method or hw_method == "auto":
@@ -164,6 +208,15 @@ class AutoTuner:
         if sub_cfg:
             from main.subtitle import build_vlc_subtitle_args
             args.extend(build_vlc_subtitle_args(sub_cfg))
+
+        # 5. Network Proxy (if user enabled custom proxy)
+        try:
+            from main.network import NetworkManager
+            net_args = NetworkManager.get_instance().get_vlc_args()
+            if net_args:
+                args.extend(net_args)
+        except Exception:
+            pass
 
         return args
 
@@ -186,8 +239,19 @@ class AutoTuner:
             thread_desc = f"{threads} (dựa trên {self.sys_info.cpu_cores_logical} logical cores)"
             pool_desc = f"{pool_size} workers"
 
+        gpu_pref = self.recommend_gpu_preference()
+        if gpu_pref == "power_saving":
+            gpu_alloc = f"iGPU ({self.sys_info.integrated_gpu_name}) - Card rời ({self.sys_info.discrete_gpu_name}) dành cho Game"
+        elif gpu_pref == "high_performance":
+            gpu_alloc = f"dGPU ({self.sys_info.gpu_name})"
+        elif gpu_pref == "software":
+            gpu_alloc = "Phần mềm CPU (Tắt tăng tốc GPU)"
+        else:
+            gpu_alloc = f"{self.sys_info.gpu_name}"
+
         return {
             "HW Decode": hw_str,
+            "Phân bổ GPU": gpu_alloc,
             "Decode threads": thread_desc,
             "Network buffer": f"{buffer_ms}ms (tự tối ưu RAM)",
             "Thread pool": pool_desc,

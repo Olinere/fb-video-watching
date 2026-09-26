@@ -46,10 +46,12 @@ def resolve_profile(settings: Mapping[str, Any], source_url: str) -> PlaybackPro
     """Merge source profile over global profile over legacy settings."""
     video = settings.get("video", {}) if isinstance(settings, Mapping) else {}
     streaming = settings.get("streaming", {}) if isinstance(settings, Mapping) else {}
+    domain = source_domain(source_url)
+    default_cache = 6000 if domain in ("t.me", "telegram.org") else 3000
     fallback = PlaybackProfile(
         mode="auto",
         max_height=int(video.get("max_height", 1080)),
-        network_caching_ms=int(streaming.get("network_caching", 3000)),
+        network_caching_ms=int(streaming.get("network_caching", default_cache)),
         hardware_decode=bool(streaming.get("hardware_decode", True)),
     )
     profiles = settings.get("source_profiles", {}) if isinstance(settings, Mapping) else {}

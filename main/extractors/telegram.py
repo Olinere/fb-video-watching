@@ -19,7 +19,6 @@ from main.extractors.base import (
     NetworkError,
 )
 from main.stream_proxy import StreamProxyServer
-from main.telegram_manager import TelegramManager, TELEGRAM_URL_PATTERN
 
 logger = logging.getLogger("FBVideoWatcher.Extractors.Telegram")
 
@@ -34,6 +33,7 @@ class TelegramExtractor(BaseExtractor):
         u = url.strip()
         if "/k/d/" in u or "/a/d/" in u:
             return True
+        from main.telegram_manager import TELEGRAM_URL_PATTERN
         return bool(TELEGRAM_URL_PATTERN.search(u))
 
     def extract(
@@ -51,6 +51,7 @@ class TelegramExtractor(BaseExtractor):
                 "Vui lòng chuột phải vào video trong Telegram và chọn 'Copy Link' (hoặc copy link dạng 'https://t.me/c/...')."
             )
 
+        from main.telegram_manager import TelegramManager
         parsed = TelegramManager.parse_telegram_url(u)
         if not parsed:
             raise URLValidationError("Đường dẫn Telegram không hợp lệ hoặc không được hỗ trợ.")

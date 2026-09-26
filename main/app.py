@@ -19,6 +19,7 @@ from main.constants import (
     UI_UPDATE_INTERVAL_MS,
     UI_IDLE_INTERVAL_MS,
     CLIPBOARD_POLL_INTERVAL_MS,
+    HEALTH_SUGGESTION_COOLDOWN_SECONDS,
     MAX_QUEUE_ITEMS,
 )
 from main.settings import SettingsManager
@@ -39,8 +40,9 @@ from main.gui import MainWindow
 from main.timestamp import format_timestamp
 from main.playback_queue import PlaybackQueue, QueueItem
 from main.queue_controller import QueueController
+from main.queue_persistence import QueuePersistence
 from main.privacy_session import RuntimePersistencePolicy
-from main.playback_profiles import resolve_profile
+from main.playback_profiles import resolve_profile, source_domain
 from main.playback_health import PlaybackHealthMonitor
 
 logger = logging.getLogger("FBVideoWatcher")
@@ -75,10 +77,24 @@ class Application:
             self.queue,
             skip_failed_items=self.settings.get("playback", "skip_failed_items", default=False),
         )
+        self.queue_persistence = QueuePersistence(
+            self.settings.config_dir / "queue.json",
+            policy=self.persistence_policy,
+        )
+        if self.settings.get("playback", "queue_persist", default=True):
+            loaded_count = self.queue_persistence.load(self.queue)
+            if loaded_count > 0:
+                logger.info(f"Đã khôi phục {loaded_count} mục trong hàng đợi phát.")
         self._active_queue_item: Optional[QueueItem] = None
         self.health_monitor = PlaybackHealthMonitor()
+        self._last_health_suggestion_time = 0.0
+        self._last_health_suggestion_url = ""
 
-        # 2. Detect System Info & Auto-tune VLC arguments
+        # 2. Network Manager (Proxy & In-App DoH DNS)
+        from main.network import NetworkManager
+        self.network_manager = NetworkManager.get_instance(self.settings.settings)
+
+        # 3. Detect System Info & Auto-tune VLC arguments
         self.sys_info = SystemInfo.detect()
         self.tuner = AutoTuner(self.sys_info, self.settings.settings)
         self.vlc_args = self.tuner.build_vlc_args()
@@ -140,8 +156,19 @@ class Application:
             on_subtitle_load=self.handle_load_subtitle,
             on_update_request=self._start_update_download,
             on_add_to_queue=self.handle_add_to_queue,
+            on_play_queue_item=self.handle_play_queue_item,
+            on_remove_queue_item=self.handle_remove_queue_item,
+            on_move_queue_item=self.handle_move_queue_item,
+            on_clear_queue=self.handle_clear_queue,
+            on_clear_played_queue=self.handle_clear_played_queue,
+            on_retry_queue_item=self.handle_retry_queue_item,
+            on_next_track=self.handle_next_track,
+            on_previous_track=self.handle_previous_track,
             on_chapter_seek=self.handle_seek_request,
             on_privacy_toggle=self.handle_privacy_toggle,
+            on_bulk_import_queue=self.handle_bulk_add_to_queue,
+            on_bulk_replace_and_play=self.handle_bulk_replace_and_play,
+            on_queue_persist_toggle=self.handle_queue_persist_toggle,
         )
         self.gui.set_privacy_state(self.persistence_policy.is_enabled())
         if hasattr(self.gui, "refresh_queue"):
@@ -222,6 +249,34 @@ class Application:
         # 14. Dọn sạch tàn dư file cũ từ lần cập nhật trước (background thread - không ảnh hưởng startup)
         threading.Thread(target=self._cleanup_on_startup, daemon=True).start()
 
+        self._ui_timer_id = None
+        self._maint_timer_id = None
+        self._clip_timer_id = None
+        self._seek_cleanup_timer_id = None
+
+        def _on_root_destroyed(event=None):
+            if event is not None and getattr(event, "widget", None) != self.root:
+                return
+            self._is_shutting_down = True
+            for tid_name in ("_ui_timer_id", "_maint_timer_id", "_clip_timer_id", "_seek_cleanup_timer_id"):
+                tid = getattr(self, tid_name, None)
+                if tid is not None:
+                    try:
+                        self.root.after_cancel(tid)
+                    except Exception:
+                        pass
+                    setattr(self, tid_name, None)
+            if hasattr(self.gui, "destroy"):
+                try:
+                    self.gui.destroy()
+                except Exception:
+                    pass
+
+        try:
+            self.root.bind("<Destroy>", _on_root_destroyed, add="+")
+        except Exception:
+            pass
+
     # --- Periodic UI Refresh Timer (250ms interval) ---
 
     def _start_ui_timer(self) -> None:
@@ -232,19 +287,37 @@ class Application:
         """Periodic tick running on main thread to synchronize UI with VLC engine."""
         if self._is_shutting_down:
             return
+        if not hasattr(self.root, "winfo_exists"):
+            return
+        try:
+            if not self.root.winfo_exists():
+                self._is_shutting_down = True
+                return
+        except Exception:
+            self._is_shutting_down = True
+            return
 
         if self.player:
-            current_ms = self.player.get_position()
-            duration_ms = self.player.get_duration()
+            raw_pos = self.player.get_position()
+            raw_dur = self.player.get_duration()
+            current_ms = int(raw_pos) if isinstance(raw_pos, (int, float)) else 0
+            duration_ms = int(raw_dur) if isinstance(raw_dur, (int, float)) else 0
             if duration_ms <= 0 and getattr(self, "_resolved_duration_ms", 0) > 0:
                 duration_ms = self._resolved_duration_ms
-            self.gui.update_playback_time(current_ms, duration_ms)
-            if hasattr(self.gui, "update_chapter_position"):
-                self.gui.update_chapter_position(current_ms)
+            try:
+                self.gui.update_playback_time(current_ms, duration_ms)
+                if hasattr(self.gui, "update_chapter_position"):
+                    self.gui.update_chapter_position(current_ms)
+            except Exception:
+                pass
 
             state = self.player.state
             health = self.health_monitor.tick(state)
-            self.gui.set_play_pause_button_state(state == "playing")
+            self._check_playback_health_degraded(health)
+            try:
+                self.gui.set_play_pause_button_state(state == "playing")
+            except Exception:
+                pass
 
             if state == "playing":
                 self._consecutive_healthy_play_ticks += 1
@@ -282,38 +355,77 @@ class Application:
         # lower rate while idle avoids waking the main thread unnecessarily
         # when the user is gaming/editing in parallel.
         interval = UI_UPDATE_INTERVAL_MS if self.player and self.player.state == "playing" else UI_IDLE_INTERVAL_MS
-        self.root.after(interval, self._update_ui_state)
+        if not self._is_shutting_down:
+            try:
+                self._ui_timer_id = self.root.after(interval, self._update_ui_state)
+            except Exception:
+                pass
 
     # --- Periodic Maintenance (Memory leak & WAL prevention) ---
 
     def _start_maintenance_timer(self) -> None:
         """Schedule 60-second periodic maintenance for long-term video stability."""
-        self.root.after(60000, self._periodic_maintenance)
+        try:
+            self._maint_timer_id = self.root.after(60000, self._periodic_maintenance)
+        except Exception:
+            pass
 
     def _periodic_maintenance(self) -> None:
         """Run GC and WAL checkpointing every 60s."""
         if self._is_shutting_down:
             return
+        if not hasattr(self.root, "winfo_exists"):
+            return
+        try:
+            if not self.root.winfo_exists():
+                self._is_shutting_down = True
+                return
+        except Exception:
+            self._is_shutting_down = True
+            return
 
-        # 1. Collect cyclic garbage in Python heap
-        gc.collect(1)
+        # 1. Collect cyclic garbage across all generations in Python heap
+        gc.collect()
 
-        # 2. Checkpoint SQLite WAL in background
+        # 2. Checkpoint SQLite WAL & trim process working set in background
         self.executor.submit(self.history.checkpoint_wal)
+        self.executor.submit(self._post_task_cleanup)
 
         # Re-arm timer
-        self.root.after(60000, self._periodic_maintenance)
+        if not self._is_shutting_down:
+            try:
+                self._maint_timer_id = self.root.after(60000, self._periodic_maintenance)
+            except Exception:
+                pass
 
     def _start_clipboard_timer(self) -> None:
         """Schedule periodic clipboard check (every 1000ms)."""
-        self.root.after(CLIPBOARD_POLL_INTERVAL_MS, self._periodic_clipboard_check)
+        try:
+            self._clip_timer_id = self.root.after(CLIPBOARD_POLL_INTERVAL_MS, self._periodic_clipboard_check)
+        except Exception:
+            pass
 
     def _periodic_clipboard_check(self) -> None:
         """Periodic tick checking clipboard for copied video links."""
         if self._is_shutting_down:
             return
+        if not hasattr(self.root, "winfo_exists"):
+            return
+        try:
+            if not self.root.winfo_exists():
+                self._is_shutting_down = True
+                return
+        except Exception:
+            self._is_shutting_down = True
+            return
+
         self._check_clipboard()
-        self.root.after(CLIPBOARD_POLL_INTERVAL_MS, self._periodic_clipboard_check)
+        if not self._is_shutting_down:
+            try:
+                self._clip_timer_id = self.root.after(CLIPBOARD_POLL_INTERVAL_MS, self._periodic_clipboard_check)
+            except Exception:
+                pass
+
 
     # --- Playback & Action Handlers ---
 
@@ -340,24 +452,41 @@ class Application:
             )
             return
 
-        # A normal Play starts a fresh runtime queue.  Queue transitions set
-        # _queue_transition so they retain the remaining items.
+        # Keep runtime queue intact: activate existing item if in queue,
+        # or append if queue has items, or start fresh if queue was empty.
         if self._queue_transition and self._pending_queue_item is not None:
             queue_item = self._pending_queue_item
             self._pending_queue_item = None
         else:
-            self.queue.clear()
-            try:
-                queue_item = self.queue_controller.add_url(
-                    url,
-                    title=url,
-                    privacy_only=self.persistence_policy.is_enabled(),
-                )
-            except (OverflowError, ValueError) as exc:
-                self.gui.show_error(str(exc))
-                return
+            existing = next((it for it in self.queue.items if it.source_url == url), None)
+            if existing is not None:
+                queue_item = existing
+            elif len(self.queue) > 0:
+                try:
+                    queue_item = self.queue_controller.add_url(
+                        url,
+                        title=url,
+                        privacy_only=self.persistence_policy.is_enabled(),
+                    )
+                except (OverflowError, ValueError) as exc:
+                    self.gui.show_error(str(exc))
+                    return
+            else:
+                self.queue.clear()
+                try:
+                    queue_item = self.queue_controller.add_url(
+                        url,
+                        title=url,
+                        privacy_only=self.persistence_policy.is_enabled(),
+                    )
+                except (OverflowError, ValueError) as exc:
+                    self.gui.show_error(str(exc))
+                    return
         self._active_queue_item = queue_item
         self.queue_controller.begin(queue_item)
+        if hasattr(self.gui, "refresh_queue"):
+            self.gui.refresh_queue(self.queue.snapshot())
+        self._save_queue_if_persisted()
 
         # Save previous video position before loading new one (§7.2 case #17)
         if self._original_url and self.persistence_policy.allow_resume_write():
@@ -443,6 +572,21 @@ class Application:
         finally:
             self._queue_transition = False
 
+    def _save_queue_if_persisted(self) -> None:
+        """Atomically persist queue snapshot if queue_persist is enabled and allowed by policy."""
+        if self.settings.get("playback", "queue_persist", default=True):
+            try:
+                self.queue_persistence.save(self.queue)
+            except Exception as exc:
+                logger.debug("Không thể lưu queue persistence: %s", exc)
+
+    def handle_queue_persist_toggle(self, enabled: bool) -> None:
+        """Handle user toggling queue persistence directly in the Queue UI."""
+        self.settings.set("playback", "queue_persist", enabled)
+        self.settings.save()
+        if enabled:
+            self._save_queue_if_persisted()
+
     def handle_add_to_queue(self, url: str) -> None:
         """Add source metadata only; resolve lazily when it becomes active."""
         cleaned = (url or "").strip()
@@ -471,6 +615,7 @@ class Application:
             return
         if hasattr(self.gui, "refresh_queue"):
             self.gui.refresh_queue(self.queue.snapshot())
+        self._save_queue_if_persisted()
         self.gui.set_status(f"Đã thêm vào hàng đợi: {item.title}")
 
     def _on_collection_add_completed(self, future: concurrent.futures.Future) -> None:
@@ -492,9 +637,137 @@ class Application:
             self.queue.add_many(items)
             if hasattr(self.gui, "refresh_queue"):
                 self.gui.refresh_queue(self.queue.snapshot())
+            self._save_queue_if_persisted()
             self.gui.set_status(f"Đã thêm {len(items)} video metadata vào hàng đợi.")
         except Exception as exc:
             self.gui.show_error(f"Không thể thêm playlist: {exc}")
+
+    def handle_bulk_add_to_queue(self, parsed_items: list) -> None:
+        """Add multiple parsed video items to queue without clearing existing items."""
+        if not parsed_items:
+            return
+        items = [
+            QueueItem(
+                source_url=p.url,
+                source_name=p.source_name,
+                title=p.description if p.description else p.url,
+                description=p.description,
+                privacy_only=self.persistence_policy.is_enabled(),
+            )
+            for p in parsed_items
+        ]
+        self.queue.add_many(items)
+        if hasattr(self.gui, "refresh_queue"):
+            self.gui.refresh_queue(self.queue.snapshot())
+        self._save_queue_if_persisted()
+        self.gui.set_status(f"Đã thêm {len(items)} video vào hàng đợi.")
+        logger.info("Queue: Đã thêm %d video vào hàng đợi từ bộ bóc tách văn bản.", len(items))
+
+    def handle_bulk_replace_and_play(self, parsed_items: list) -> None:
+        """Clear queue, add parsed video items, and begin playing the first item immediately."""
+        if not parsed_items:
+            return
+        self.queue.clear()
+        items = [
+            QueueItem(
+                source_url=p.url,
+                source_name=p.source_name,
+                title=p.description if p.description else p.url,
+                description=p.description,
+                privacy_only=self.persistence_policy.is_enabled(),
+            )
+            for p in parsed_items
+        ]
+        self.queue.add_many(items)
+        if hasattr(self.gui, "refresh_queue"):
+            self.gui.refresh_queue(self.queue.snapshot())
+        self._save_queue_if_persisted()
+        first_item = items[0]
+        self._pending_queue_item = first_item
+        self._queue_transition = True
+        try:
+            self.handle_play_request(first_item.source_url)
+        finally:
+            self._queue_transition = False
+        logger.info("Queue: Đã thay thế hàng đợi bằng %d video và phát tập 1.", len(items))
+
+    def handle_play_queue_item(self, queue_id: str) -> None:
+        """Play a specific item in the queue without clearing other playlist items."""
+        item = self.queue.get(queue_id)
+        if not item:
+            return
+        self._start_next_queue_item(item)
+
+    def handle_remove_queue_item(self, queue_id: str) -> None:
+        """Remove an item from the queue."""
+        self.queue.remove(queue_id)
+        if hasattr(self.gui, "refresh_queue"):
+            self.gui.refresh_queue(self.queue.snapshot())
+        self._save_queue_if_persisted()
+
+    def handle_move_queue_item(self, queue_id: str, delta: int) -> None:
+        """Reorder queue items up or down."""
+        item = self.queue.get(queue_id)
+        if not item:
+            return
+        new_idx = max(0, min(len(self.queue) - 1, item.position + delta))
+        self.queue.move(queue_id, new_idx)
+        if hasattr(self.gui, "refresh_queue"):
+            self.gui.refresh_queue(self.queue.snapshot())
+        self._save_queue_if_persisted()
+
+    def handle_clear_queue(self) -> None:
+        """Clear all items in queue except active playing item."""
+        self.queue.clear(keep_current=True)
+        if hasattr(self.gui, "refresh_queue"):
+            self.gui.refresh_queue(self.queue.snapshot())
+        self._save_queue_if_persisted()
+        self.gui.show_osd_message("🗑️ Đã làm trống danh sách phát")
+
+    def handle_clear_played_queue(self) -> None:
+        """Remove played items from the queue."""
+        removed = self.queue.clear_played()
+        if hasattr(self.gui, "refresh_queue"):
+            self.gui.refresh_queue(self.queue.snapshot())
+        self._save_queue_if_persisted()
+        self.gui.show_osd_message(f"🧹 Đã dọn {removed} video đã xem")
+
+    def handle_retry_queue_item(self, queue_id: str) -> None:
+        """Retry resolving and playing a failed item."""
+        item = self.queue.get(queue_id)
+        if not item:
+            return
+        self.queue.mark_status(queue_id, "pending")
+        if hasattr(self.gui, "refresh_queue"):
+            self.gui.refresh_queue(self.queue.snapshot())
+        self._save_queue_if_persisted()
+        self._start_next_queue_item(item)
+
+    def handle_next_track(self) -> None:
+        """Advance to next track in queue/playlist."""
+        if not len(self.queue):
+            return
+        next_item = self.queue_controller.next_item()
+        if next_item:
+            self.gui.set_status("Đang chuyển sang video kế tiếp...")
+            if hasattr(self.gui, "refresh_queue"):
+                self.gui.refresh_queue(self.queue.snapshot())
+            self._start_next_queue_item(next_item)
+        else:
+            self.gui.show_osd_message("⏭️ Đã đến cuối danh sách phát")
+
+    def handle_previous_track(self) -> None:
+        """Go back to previous track in queue/playlist."""
+        if not len(self.queue):
+            return
+        prev_item = self.queue_controller.previous_item()
+        if prev_item:
+            self.gui.set_status("Đang chuyển sang video trước...")
+            if hasattr(self.gui, "refresh_queue"):
+                self.gui.refresh_queue(self.queue.snapshot())
+            self._start_next_queue_item(prev_item)
+        else:
+            self.gui.show_osd_message("⏮️ Đã ở đầu danh sách phát")
 
     def handle_privacy_toggle(self) -> None:
         """Toggle runtime privacy; preference settings remain explicitly savable."""
@@ -512,6 +785,47 @@ class Application:
         self.gui.show_osd_message(
             "🔒 Đã bật Privacy Session" if self.persistence_policy.is_enabled() else "🔓 Đã tắt Privacy Session"
         )
+
+    def _check_playback_health_degraded(self, health) -> None:
+        """Check if playback health is degraded or critical and show suggestion according to profile mode."""
+        if not health or health.state not in ("degraded", "critical"):
+            return
+        now = time.monotonic()
+        if now - self._last_health_suggestion_time < HEALTH_SUGGESTION_COOLDOWN_SECONDS:
+            return
+        self._last_health_suggestion_time = now
+        self._last_health_suggestion_url = self._original_url or ""
+
+        url = self._original_url or ""
+        profile = resolve_profile(self.settings.settings, url)
+        if profile.mode == "custom":
+            msg = (
+                "Mạng có dấu hiệu không ổn định hoặc tốc độ tải không đủ cho cấu hình hiện tại.\n"
+                "Gợi ý: chuyển sang Auto để ứng dụng tự tối ưu stream mượt hơn."
+            )
+            if hasattr(self.gui, "show_network_suggestion_prompt"):
+                self.gui.show_network_suggestion_prompt(msg, self.handle_switch_to_auto_profile)
+        else:
+            self.gui.show_osd_message("📶 Mạng không ổn định - Đang tự động tối ưu...")
+
+    def handle_switch_to_auto_profile(self) -> None:
+        """Switch active domain or global source profile to 'auto' mode."""
+        profiles = self.settings.get("source_profiles", default={})
+        if not isinstance(profiles, dict):
+            profiles = {}
+        if self._original_url:
+            domain = source_domain(self._original_url)
+            if domain in profiles and isinstance(profiles[domain], dict):
+                profiles[domain]["mode"] = "auto"
+        if "global" in profiles and isinstance(profiles["global"], dict):
+            profiles["global"]["mode"] = "auto"
+        else:
+            profiles["global"] = {"mode": "auto"}
+        self.settings.set("source_profiles", profiles)
+        self.settings.save()
+        if hasattr(self.gui, "hide_network_suggestion_prompt"):
+            self.gui.hide_network_suggestion_prompt()
+        self.gui.show_osd_message("⚡ Đã chuyển sang cấu hình Auto tối ưu mạng")
 
     def _start_next_queue_item(self, item: QueueItem) -> None:
         """Start one queued item while retaining the rest of the queue."""
@@ -566,6 +880,11 @@ class Application:
             f"Phân giải thành công: '{self.persistence_policy.redact(resolved.title)}' | "
             f"Thời lượng: {resolved.duration or 0:.0f}s | Live: {resolved.is_live}"
         )
+        self.health_monitor.reset()
+        self._last_health_suggestion_time = 0.0
+        self._last_health_suggestion_url = original_url
+        if hasattr(self.gui, "hide_network_suggestion_prompt"):
+            self.gui.hide_network_suggestion_prompt()
         self._current_stream_url = resolved.stream_url
         if hasattr(self.gui, "set_chapters"):
             self.gui.set_chapters(getattr(resolved, "chapters", None))
@@ -582,24 +901,26 @@ class Application:
         self.gui.hide_overlay()
         self.gui.set_status(f"Đang phát: {resolved.title}")
 
-        # Auto-detect vertical video (9:16) for Reels, TikTok, Shorts
-        is_vertical = False
-        url_lower = original_url.lower()
-        if any(k in url_lower for k in ("/reel/", "/reels/", "/shorts/", "tiktok.com", "douyin.com")):
-            is_vertical = True
-        elif resolved.height and resolved.width and resolved.height > resolved.width:
-            is_vertical = True
-        elif resolved.formats:
-            v_fmts = [f for f in resolved.formats if f.height and f.width]
-            if v_fmts:
-                best_fmt = max(v_fmts, key=lambda f: (f.height or 0) * (f.width or 0))
-                if best_fmt.height and best_fmt.width and best_fmt.height > best_fmt.width:
-                    is_vertical = True
+        # Auto-detect vertical video (9:16) for Reels, TikTok, Shorts only if auto-detection is enabled
+        auto_pip = self.settings.get("ui", "pip_auto_aspect_ratio", default=False)
+        if auto_pip:
+            is_vertical = False
+            url_lower = original_url.lower()
+            if any(k in url_lower for k in ("/reel/", "/reels/", "/shorts/", "tiktok.com", "douyin.com")):
+                is_vertical = True
+            elif resolved.height and resolved.width and resolved.height > resolved.width:
+                is_vertical = True
+            elif resolved.formats:
+                v_fmts = [f for f in resolved.formats if f.height and f.width]
+                if v_fmts:
+                    best_fmt = max(v_fmts, key=lambda f: (f.height or 0) * (f.width or 0))
+                    if best_fmt.height and best_fmt.width and best_fmt.height > best_fmt.width:
+                        is_vertical = True
 
-        if is_vertical:
-            self.gui.set_pip_aspect_ratio("9:16")
-        else:
-            self.gui.set_pip_aspect_ratio("16:9")
+            if is_vertical:
+                self.gui.set_pip_aspect_ratio("9:16", persist=False)
+            else:
+                self.gui.set_pip_aspect_ratio("16:9", persist=False)
 
         resolved_dur_ms = int((resolved.duration or 0) * 1000)
         self._resolved_duration_ms = resolved_dur_ms
@@ -629,11 +950,13 @@ class Application:
 
         # Start playback via VLC
         sub_file = self.settings.get("subtitle", "file", default="")
+        profile = resolve_profile(self.settings.settings, original_url)
         self.player.play(
             resolved.stream_url,
             audio_url=resolved.audio_url,
             subtitle_file=sub_file if sub_file else None,
             http_headers=resolved.http_headers,
+            network_caching_ms=profile.network_caching_ms,
         )
 
         # Apply default playback speed
@@ -670,6 +993,7 @@ class Application:
             time_str = format_timestamp(target_ms)
             self.gui.show_osd_message(f"⏱️ Tiếp tục từ {time_str}")
             logger.info(f"Đã tự động tiếp tục phát từ mốc: {time_str} ({target_ms}ms)")
+            self._schedule_post_seek_cleanup()
         else:
             self.root.after(150, lambda: self._perform_resume_seek(url, target_ms, max_attempts - 1))
 
@@ -741,10 +1065,38 @@ class Application:
         except Exception:
             pass
 
+    def _schedule_post_seek_cleanup(self, delay_ms: int = 2500) -> None:
+        """
+        Debounce và lập lịch dọn RAM ngầm sau khi tua/seek video.
+        Chờ 2.5s sau khi dừng tua để VLC ổn định luồng phát, sau đó mới
+        chạy _post_task_cleanup trên background executor thread.
+        """
+        if self._is_shutting_down:
+            return
+        if self._seek_cleanup_timer_id is not None:
+            try:
+                self.root.after_cancel(self._seek_cleanup_timer_id)
+            except Exception:
+                pass
+            self._seek_cleanup_timer_id = None
+        if hasattr(self.root, "winfo_exists") and self.root.winfo_exists():
+            try:
+                self._seek_cleanup_timer_id = self.root.after(
+                    delay_ms, self._trigger_post_seek_cleanup
+                )
+            except Exception:
+                pass
+
+    def _trigger_post_seek_cleanup(self) -> None:
+        """Kích hoạt bởi debounce timer sau khi tua video."""
+        self._seek_cleanup_timer_id = None
+        if not self._is_shutting_down:
+            self.executor.submit(self._post_task_cleanup)
+
     def _post_task_cleanup(self) -> None:
         """
         Dọn rác Python heap và ép Windows thu hồi RAM vật lý nhàn rỗi.
-        Chỉ gọi sau khi tác vụ nặng hoàn thành (resolve, đóng dialog, dừng video).
+        Chỉ gọi sau khi tác vụ nặng hoàn thành (resolve, đóng dialog, dừng video, sau khi tua/seek).
         KHÔNG BAO GIỜ gọi trong vòng lặp UI timer 250ms.
         """
         gc.collect()
@@ -822,11 +1174,13 @@ class Application:
             self.player.seek_to(time_ms)
             if self.player.state == "playing":
                 self.gui.set_play_pause_button_state(True)
+            self._schedule_post_seek_cleanup()
 
     def handle_seek_relative(self, delta_seconds: int) -> None:
         if self.player:
             self.player.seek_relative(delta_seconds)
             self.gui.show_osd_seek(delta_seconds)
+            self._schedule_post_seek_cleanup()
 
     def handle_volume_change(self, volume: int) -> None:
         if self.player:
@@ -855,6 +1209,15 @@ class Application:
 
     def _on_window_focus_in(self, event=None) -> None:
         """Check clipboard immediately when user focuses the application window."""
+        if self._is_shutting_down:
+            return
+        if not hasattr(self.root, "winfo_exists"):
+            return
+        try:
+            if not self.root.winfo_exists():
+                return
+        except Exception:
+            return
         self._check_clipboard()
 
     def _check_clipboard(self) -> None:
@@ -862,6 +1225,13 @@ class Application:
         if self._is_shutting_down:
             return
         if not self.settings.get("ui", "clipboard_auto_detect", default=True):
+            return
+        if not hasattr(self.root, "winfo_exists"):
+            return
+        try:
+            if not self.root.winfo_exists():
+                return
+        except Exception:
             return
         try:
             clip = self.root.clipboard_get().strip()
@@ -871,13 +1241,23 @@ class Application:
         if not clip or clip == self._last_detected_clipboard:
             return
 
-        current_url = self.gui.url_entry.get().strip()
+        try:
+            if not hasattr(self.gui, "url_entry") or not self.gui.url_entry.winfo_exists():
+                return
+            current_url = self.gui.url_entry.get().strip()
+        except Exception:
+            return
+
         if clip == current_url or clip == self._original_url:
             return
 
         if is_potential_video_url(clip):
             self._last_detected_clipboard = clip
-            self.gui.show_clipboard_prompt(clip)
+            try:
+                self.gui.show_clipboard_prompt(clip)
+            except Exception:
+                pass
+
 
     def handle_open_history(self) -> None:
         """Open watch history modal. If already open, brings to front."""
@@ -910,17 +1290,27 @@ class Application:
             self.root.after(200, lambda: self._perform_resume_seek(url, resume_pos_ms))
 
     def handle_download_request(self, audio_only: Optional[bool] = None) -> None:
-        """Handle video download request via VideoDownloader."""
+        """Handle video download request via VideoDownloader or cancel active download."""
+        if (
+            hasattr(self, "_active_downloader")
+            and self._active_downloader
+            and self._active_downloader._thread
+            and self._active_downloader._thread.is_alive()
+        ):
+            if messagebox.askyesno(
+                "Hủy tải video",
+                "Tiến trình tải video đang chạy.\nBạn có chắc chắn muốn hủy quá trình tải này không?",
+                parent=self.root,
+            ):
+                self.gui.set_status("🛑 Đang hủy tiến trình tải...")
+                self.gui.btn_download.configure(text="⏳ Đang hủy...", state=tk.DISABLED)
+                self._active_downloader.cancel()
+            return
+
         url = self.gui.url_entry.get().strip() or self._original_url
         if not url:
             messagebox.showinfo("Tải video", "Vui lòng dán hoặc nhập liên kết video trước khi tải về.")
             return
-
-        if hasattr(self, "_active_downloader") and self._active_downloader and self._active_downloader._thread and self._active_downloader._thread.is_alive():
-            if messagebox.askyesno("Đang tải video", "Đang có tiến trình tải video khác. Bạn có muốn hủy tiến trình hiện tại để tải video mới không?"):
-                self._active_downloader.cancel()
-            else:
-                return
 
         # Determine download format (Video MP4 vs Audio MP3)
         if audio_only is None:
@@ -942,6 +1332,10 @@ class Application:
                 if choice is None:
                     return
                 audio_only = (choice is False)
+
+        from main.ffmpeg_utils import is_ffmpeg_available
+        if not is_ffmpeg_available():
+            logger.info("Tiện ích FFmpeg chưa cài đặt; tự động áp dụng chế độ tương thích (Progressive MP4).")
 
         from pathlib import Path
         from main.downloader import VideoDownloader, get_default_download_dir
@@ -968,7 +1362,7 @@ class Application:
         max_height = self.settings.get("video", "max_height", default=1080)
 
         fmt_label = "âm thanh MP3" if audio_only else "video"
-        self.gui.btn_download.configure(text="⬇ 0%", state=tk.DISABLED)
+        self.gui.btn_download.configure(text="❌ Hủy (0%)", state=tk.NORMAL)
         self.gui.set_status(f"Bắt đầu tải {fmt_label} vào: {download_dir}...")
 
         def on_progress(info: dict):
@@ -1000,12 +1394,13 @@ class Application:
 
     def _on_download_progress(self, percent: float, status_msg: str) -> None:
         if not self._is_shutting_down:
-            self.gui.btn_download.configure(text=f"⬇ {int(percent)}%")
+            self.gui.btn_download.configure(text=f"❌ Hủy ({int(percent)}%)", state=tk.NORMAL)
             self.gui.set_status(status_msg)
 
     def _on_download_completed(self, filepath) -> None:
         if self._is_shutting_down:
             return
+        self._active_downloader = None
         self.gui.btn_download.configure(text="⬇ Tải về", state=tk.NORMAL)
         self.gui.set_status(f"Tải thành công: {filepath.name}")
 
@@ -1031,7 +1426,13 @@ class Application:
     def _on_download_error(self, err_msg: str) -> None:
         if self._is_shutting_down:
             return
+        self._active_downloader = None
         self.gui.btn_download.configure(text="⬇ Tải về", state=tk.NORMAL)
+        if "hủy" in err_msg.lower() or "cancel" in err_msg.lower():
+            self.gui.set_status("🛑 Đã hủy tải video.")
+            if hasattr(self.gui, "show_osd"):
+                self.gui.show_osd("🛑 Đã hủy tải video")
+            return
         self.gui.set_status(f"Lỗi tải video: {err_msg}")
         messagebox.showerror("Lỗi tải video", err_msg)
 
@@ -1059,8 +1460,27 @@ class Application:
         mode = perf_cfg.get("cpu_affinity_mode", "auto")
         apply_cpu_affinity(mode, self.sys_info)
 
+        # 4. Smart GPU Offloading (Windows UserGpuPreferences)
+        from main.platform_utils import apply_windows_gpu_preference
+        gpu_pref_mode = self.tuner.recommend_gpu_preference()
+        if gpu_pref_mode in ("power_saving", "high_performance", "default"):
+            apply_windows_gpu_preference(mode=gpu_pref_mode)
+            if gpu_pref_mode == "power_saving":
+                logger.info(
+                    "Smart GPU: Tự động phân bổ giải mã video sang iGPU (%s) để nhường card rời (%s) cho Game/3D.",
+                    getattr(self.sys_info, "integrated_gpu_name", "iGPU"),
+                    getattr(self.sys_info, "discrete_gpu_name", "dGPU"),
+                )
+
     def handle_settings_updated(self) -> None:
         """Callback when user saves new settings."""
+        # Update in-app isolated NetworkManager (Proxy & DoH DNS)
+        if hasattr(self, "network_manager") and self.network_manager:
+            try:
+                self.network_manager.apply_settings(self.settings.settings)
+            except Exception as e:
+                logger.warning("Lỗi cập nhật cấu hình mạng: %s", e)
+
         # Rebuild AutoTuner and VLC args for subsequent playbacks
         self.tuner = AutoTuner(self.sys_info, self.settings.settings)
         self.vlc_args = self.tuner.build_vlc_args()
@@ -1081,6 +1501,8 @@ class Application:
             self.gui.update_seek_buttons()
         if hasattr(self.gui, "rebind_shortcuts"):
             self.gui.rebind_shortcuts()
+        if hasattr(self.gui, "apply_theme"):
+            self.gui.apply_theme()
 
     def handle_load_subtitle(self, subtitle_path: str) -> None:
         """Attach external subtitle file dynamically to player."""
@@ -1185,8 +1607,10 @@ class Application:
             self.gui.set_status("Đang chuyển sang video kế tiếp...")
             if hasattr(self.gui, "refresh_queue"):
                 self.gui.refresh_queue(self.queue.snapshot())
+            self._save_queue_if_persisted()
             self._start_next_queue_item(next_item)
             return
+        self._save_queue_if_persisted()
         self.gui.set_status("Đã phát xong video.")
         self.gui.set_play_pause_button_state(False)
 
@@ -1242,6 +1666,14 @@ class Application:
     def on_closing(self) -> None:
         """Handle window closing event cleanly without freezing (§9.2 E)."""
         self._is_shutting_down = True
+        for tid_name in ("_ui_timer_id", "_maint_timer_id", "_clip_timer_id", "_seek_cleanup_timer_id"):
+            tid = getattr(self, tid_name, None)
+            if tid is not None:
+                try:
+                    self.root.after_cancel(tid)
+                except Exception:
+                    pass
+                setattr(self, tid_name, None)
         self._save_current_position()
 
         # Save last PiP dimensions if closed during PiP mode
@@ -1269,8 +1701,22 @@ class Application:
 
         self.settings.save()
 
+        # Save queue persistence if enabled
+        if self.settings.get("playback", "queue_persist", default=False):
+            try:
+                self.queue_persistence.save(self.queue)
+            except Exception:
+                pass
+
         if self.player:
             self.player.release()
+
+        # Cancel active background downloader if running
+        if hasattr(self, "_active_downloader") and self._active_downloader:
+            try:
+                self._active_downloader.cancel()
+            except Exception:
+                pass
 
         # Shutdown worker threads
         self.executor.shutdown(wait=False, cancel_futures=True)

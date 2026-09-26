@@ -21,6 +21,16 @@ class PlaybackHealthMonitor:
         self.degraded_after_ms = max(1000, int(degraded_after_ms))
         self.critical_after_ms = max(self.degraded_after_ms, int(critical_after_ms))
         self._buffer_started: Optional[float] = None
+        self._healthy_play_started: Optional[float] = None
+        self._buffering_ms = 0
+        self._buffering_events = 0
+        self._error_count = 0
+        self._state = "healthy"
+
+    def reset(self) -> None:
+        """Reset health state for a newly loaded video."""
+        self._buffer_started = None
+        self._healthy_play_started = None
         self._buffering_ms = 0
         self._buffering_events = 0
         self._error_count = 0
@@ -29,13 +39,27 @@ class PlaybackHealthMonitor:
     def tick(self, player_state: str, now: Optional[float] = None) -> HealthSnapshot:
         now = monotonic() if now is None else now
         if player_state == "buffering":
+            self._healthy_play_started = None
             if self._buffer_started is None:
                 self._buffer_started = now
                 self._buffering_events += 1
             self._buffering_ms = int((now - self._buffer_started) * 1000)
-        elif self._buffer_started is not None:
-            self._buffering_ms += int((now - self._buffer_started) * 1000)
-            self._buffer_started = None
+        else:
+            if self._buffer_started is not None:
+                self._buffering_ms = int((now - self._buffer_started) * 1000)
+                self._buffer_started = None
+            if player_state == "playing":
+                if self._healthy_play_started is None:
+                    self._healthy_play_started = now
+                else:
+                    smooth_sec = now - self._healthy_play_started
+                    if smooth_sec >= 20.0:
+                        self._buffering_ms = 0
+                    elif smooth_sec >= 10.0:
+                        self._buffering_ms = min(self._buffering_ms, self.degraded_after_ms)
+            else:
+                self._healthy_play_started = None
+
         if self._buffering_ms >= self.critical_after_ms:
             self._state = "critical"
         elif self._buffering_ms >= self.degraded_after_ms:
@@ -50,3 +74,4 @@ class PlaybackHealthMonitor:
 
     def snapshot(self) -> HealthSnapshot:
         return HealthSnapshot(self._state, self._buffering_ms, self._buffering_events, self._error_count)
+

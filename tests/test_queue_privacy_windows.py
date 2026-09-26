@@ -32,6 +32,14 @@ class TestWindowsInputContract(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_fbvw_uri("fbvw://play?url=javascript%3Aalert(1)")
 
+    def test_settings_dialog_protocol_toggle_no_name_error(self):
+        """Test that protocol registration toggle in settings dialog doesn't raise NameError for logger or Path."""
+        import logging
+        from main.gui.settings_dialog import logger
+        self.assertIsInstance(logger, logging.Logger)
+        self.assertEqual(logger.name, "FBVideoWatcher.SettingsDialog")
+
 
 if __name__ == "__main__":
     unittest.main()
+
