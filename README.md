@@ -14,7 +14,7 @@
 
 Người dùng thông thường **không cần cài đặt Python** hay gõ lệnh. Bạn chỉ cần tải bản `.exe` dựng sẵn:
 
-👉 **Tải bản cài đặt sẵn mới nhất (.exe) tại: [Releases · Olinere/fb-video-watching](https://github.com/Olinere/fb-video-watching/releases)**
+👉 **Tải bản cài đặt sẵn mới nhất (.exe) tại: [Đây](https://github.com/Olinere/fb-video-watching/releases)**
 
 - **Yêu cầu:** Windows 10/11 64-bit.
 - **Tiện ích đi kèm:** Nếu máy tính của bạn chưa có VLC Media Player, ứng dụng sẽ **tự động tải và cài đặt ngầm bản VLC 64-bit chính thức** từ VideoLAN trong lần đầu chạy.
