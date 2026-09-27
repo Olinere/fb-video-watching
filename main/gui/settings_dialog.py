@@ -108,9 +108,13 @@ class SettingsDialog:
         self.queue_persist_var = tk.BooleanVar(value=bool(self.settings.get("playback", "queue_persist", default=False)))
         try:
             from main.platform_utils import is_fbvw_protocol_registered
-            self.fbvw_proto_var = tk.BooleanVar(value=bool(is_fbvw_protocol_registered()))
+            saved_pref = self.settings.get("ui", "register_fbvw_protocol", default=None)
+            if saved_pref is not None:
+                self.fbvw_proto_var = tk.BooleanVar(value=bool(saved_pref))
+            else:
+                self.fbvw_proto_var = tk.BooleanVar(value=bool(is_fbvw_protocol_registered()))
         except Exception:
-            self.fbvw_proto_var = tk.BooleanVar(value=False)
+            self.fbvw_proto_var = tk.BooleanVar(value=True)
 
         # Initialize PiP Aspect Ratio variables from settings
         self.pip_aspect_ratio_var = tk.StringVar(
@@ -3750,6 +3754,7 @@ class SettingsDialog:
                     register_fbvw_protocol()
                 elif not wanted_proto and current_proto:
                     unregister_fbvw_protocol()
+                self.settings.set("ui", "register_fbvw_protocol", wanted_proto)
             except Exception as proto_err:
                 logger.warning(f"Không thể cập nhật protocol fbvw://: {proto_err}")
 

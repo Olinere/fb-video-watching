@@ -131,6 +131,10 @@ class TestPlatformUtils(unittest.TestCase):
             reg_ok = register_fbvw_protocol()
             self.assertTrue(reg_ok)
             self.assertTrue(is_fbvw_protocol_registered())
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\fbvw\shell\open") as k:
+                val, _ = winreg.QueryValueEx(k, "FriendlyAppName")
+                self.assertEqual(val, "FB Video Watcher")
 
             # Unregister
             unreg_ok = unregister_fbvw_protocol()
@@ -140,6 +144,37 @@ class TestPlatformUtils(unittest.TestCase):
             # Restore initial state if it was originally registered
             if initial_state:
                 register_fbvw_protocol()
+            else:
+                unregister_fbvw_protocol()
+
+    def test_ensure_fbvw_protocol_registered(self):
+        """Test ensure_fbvw_protocol_registered registers when missing and is idempotent."""
+        from main.platform_utils import (
+            ensure_fbvw_protocol_registered,
+            unregister_fbvw_protocol,
+            is_fbvw_protocol_registered,
+        )
+        if sys.platform != "win32":
+            self.assertFalse(ensure_fbvw_protocol_registered())
+            return
+
+        initial_state = is_fbvw_protocol_registered()
+        try:
+            # Ensure from clean state
+            unregister_fbvw_protocol()
+            self.assertFalse(is_fbvw_protocol_registered())
+
+            # First call registers
+            res1 = ensure_fbvw_protocol_registered()
+            self.assertTrue(res1)
+            self.assertTrue(is_fbvw_protocol_registered())
+
+            # Second call is idempotent and returns True
+            res2 = ensure_fbvw_protocol_registered()
+            self.assertTrue(res2)
+        finally:
+            if initial_state:
+                ensure_fbvw_protocol_registered()
             else:
                 unregister_fbvw_protocol()
 

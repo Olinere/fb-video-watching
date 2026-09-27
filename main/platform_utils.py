@@ -751,6 +751,9 @@ def get_app_launch_command() -> str:
     if getattr(sys, "frozen", False):
         return f'"{sys.executable}" "%1"'
     project_root = Path(__file__).resolve().parent.parent
+    dist_exe = project_root / "dist" / "FB-Video-Watcher.exe"
+    if dist_exe.is_file():
+        return f'"{dist_exe}" "%1"'
     main_py = project_root / "main.py"
     py_exec = sys.executable
     if py_exec.lower().endswith("python.exe"):
@@ -783,6 +786,33 @@ def register_fbvw_protocol() -> bool:
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\fbvw") as key:
             winreg.SetValueEx(key, "", 0, winreg.REG_SZ, "URL:FB Video Watcher Protocol")
             winreg.SetValueEx(key, "URL Protocol", 0, winreg.REG_SZ, "")
+            winreg.SetValueEx(key, "FriendlyTypeName", 0, winreg.REG_SZ, "FB Video Watcher")
+
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\fbvw\Application") as app_key:
+            winreg.SetValueEx(app_key, "ApplicationName", 0, winreg.REG_SZ, "FB Video Watcher")
+            winreg.SetValueEx(app_key, "ApplicationDescription", 0, winreg.REG_SZ, "FB Video Watcher")
+
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\fbvw\shell\open") as open_key:
+            winreg.SetValueEx(open_key, "FriendlyAppName", 0, winreg.REG_SZ, "FB Video Watcher")
+
+        # Setup icon if available
+        icon_path = None
+        if getattr(sys, "frozen", False):
+            icon_path = f'"{sys.executable}",0'
+        else:
+            project_root = Path(__file__).resolve().parent.parent
+            dist_exe = project_root / "dist" / "FB-Video-Watcher.exe"
+            if dist_exe.is_file():
+                icon_path = f'"{dist_exe}",0'
+            else:
+                ico_file = Path(__file__).resolve().parent / "image" / "app_icon.ico"
+                if ico_file.is_file():
+                    icon_path = f'"{ico_file}",0'
+
+        if icon_path:
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\fbvw\DefaultIcon") as icon_key:
+                winreg.SetValueEx(icon_key, "", 0, winreg.REG_SZ, icon_path)
+
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\fbvw\shell\open\command") as cmd_key:
             winreg.SetValueEx(cmd_key, "", 0, winreg.REG_SZ, cmd)
         return True
@@ -811,6 +841,27 @@ def unregister_fbvw_protocol() -> bool:
 
     _delete_key_tree(winreg.HKEY_CURRENT_USER, r"Software\Classes\fbvw")
     return not is_fbvw_protocol_registered()
+
+
+def ensure_fbvw_protocol_registered() -> bool:
+    """
+    Ensure fbvw:// protocol is registered and points to the current executable path.
+    If missing or pointing to a different path (e.g. app was moved), updates registry.
+    """
+    if sys.platform != "win32":
+        return False
+    import winreg
+    target_cmd = get_app_launch_command()
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\fbvw\shell\open\command") as key:
+            current_cmd, _ = winreg.QueryValueEx(key, "")
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\fbvw\shell\open") as open_key:
+            friendly_name, _ = winreg.QueryValueEx(open_key, "FriendlyAppName")
+        if current_cmd == target_cmd and friendly_name == "FB Video Watcher":
+            return True
+    except OSError:
+        pass
+    return register_fbvw_protocol()
 
 
 def _get_ipc_pipe_name() -> str:

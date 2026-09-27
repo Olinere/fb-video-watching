@@ -90,6 +90,14 @@ class Application:
         self._last_health_suggestion_time = 0.0
         self._last_health_suggestion_url = ""
 
+        # Auto-register fbvw:// protocol if enabled in settings
+        if sys.platform == "win32" and self.settings.get("ui", "register_fbvw_protocol", default=True):
+            try:
+                from main.platform_utils import ensure_fbvw_protocol_registered
+                ensure_fbvw_protocol_registered()
+            except Exception as ex:
+                logger.debug(f"Không thể tự động đăng ký protocol fbvw: {ex}")
+
         # 2. Network Manager (Proxy & In-App DoH DNS)
         from main.network import NetworkManager
         self.network_manager = NetworkManager.get_instance(self.settings.settings)

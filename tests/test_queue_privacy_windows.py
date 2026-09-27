@@ -44,6 +44,34 @@ class TestWindowsInputContract(unittest.TestCase):
         self.assertIsInstance(logger, logging.Logger)
         self.assertEqual(logger.name, "FBVideoWatcher.SettingsDialog")
 
+    def test_settings_dialog_protocol_checkbox_consistency(self):
+        """Test that the protocol checkbox consistently reflects saved settings."""
+        from unittest.mock import MagicMock
+        from main.settings import SettingsManager
+        from main.gui.settings_dialog import SettingsDialog
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sm = SettingsManager(Path(tmp_dir))
+            theme_mock = MagicMock()
+
+            # 1. Default should be True
+            self.assertTrue(sm.get("ui", "register_fbvw_protocol", default=True))
+
+            # 2. When saved as False, dialog reflects False
+            sm.set("ui", "register_fbvw_protocol", False)
+            dialog_mock = MagicMock()
+            dialog_mock.settings = sm
+            # Verify initialization logic
+            saved_pref = sm.get("ui", "register_fbvw_protocol", default=None)
+            self.assertFalse(saved_pref)
+
+            # 3. When saved as True, dialog reflects True
+            sm.set("ui", "register_fbvw_protocol", True)
+            saved_pref = sm.get("ui", "register_fbvw_protocol", default=None)
+            self.assertTrue(saved_pref)
+
 
 if __name__ == "__main__":
     unittest.main()

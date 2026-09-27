@@ -195,6 +195,7 @@ DEFAULT_SETTINGS = {
         "dev_mode_unlocked": False,
         "pip_aspect_ratio": "16:9",  # "16:9" | "9:16"
         "pip_auto_aspect_ratio": False, # Auto-adapt PiP ratio to video orientation (Reels/Shorts)
+        "register_fbvw_protocol": True, # Auto-register fbvw:// browser protocol
         "pip_width_horizontal": 480,
         "pip_height_horizontal": 270,
         "pip_x_horizontal": None,
