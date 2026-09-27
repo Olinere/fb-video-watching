@@ -19,14 +19,25 @@ class LaunchRequest:
     no_focus: bool = False
 
 
+def _normalize_uri_url(raw: str) -> str:
+    s = raw.strip()
+    if s.startswith(("http://", "https://", "file:///")) or (len(s) > 2 and s[1] == ":"):
+        return s
+    # Auto-prepend https:// if it looks like a web address (e.g. youtu.be/..., fb.watch/...)
+    if not s.startswith(("//", "\\\\")) and ("." in s.split("/")[0] or s.startswith(("www.", "youtu.be", "fb.watch"))):
+        return f"https://{s}"
+    return s
+
+
 def parse_fbvw_uri(value: str) -> LaunchRequest:
     parsed = urllib.parse.urlparse(str(value).strip())
     if parsed.scheme.lower() != "fbvw" or parsed.netloc.lower() not in {"play", "queue"}:
         raise ValueError("URI fbvw không hợp lệ")
     query = urllib.parse.parse_qs(parsed.query, keep_blank_values=False)
-    urls = tuple(item.strip() for item in query.get("url", ()) if item.strip())
-    if not urls:
+    raw_urls = tuple(item.strip() for item in query.get("url", ()) if item.strip())
+    if not raw_urls:
         raise ValueError("URI fbvw thiếu tham số url")
+    urls = tuple(_normalize_uri_url(u) for u in raw_urls)
     if any(not (item.startswith(("http://", "https://", "file:///")) or len(item) > 2 and item[1] == ":") for item in urls):
         raise ValueError("URI fbvw chứa input không được hỗ trợ")
     return LaunchRequest(

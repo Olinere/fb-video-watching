@@ -877,7 +877,11 @@ class TestExtendedFeatures(unittest.TestCase):
         from main.gui import SettingsDialog
 
         # 1. Verify docs/cookies_guide.html exists and is well-formed
-        guide_p = Path(__file__).resolve().parent.parent / "docs" / "cookies_guide.html"
+        candidates = [
+            Path(__file__).resolve().parent.parent / "main" / "docs" / "cookies_guide.html",
+            Path(__file__).resolve().parent.parent / "docs" / "cookies_guide.html",
+        ]
+        guide_p = next((p for p in candidates if p.is_file()), candidates[0])
         self.assertTrue(guide_p.is_file(), f"Guide HTML missing at {guide_p}")
         content = guide_p.read_text(encoding="utf-8")
         self.assertIn("cookies.txt", content)

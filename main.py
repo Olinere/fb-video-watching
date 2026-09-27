@@ -30,7 +30,12 @@ logger = logging.getLogger(APP_NAME)
 
 def main() -> None:
     """Main startup sequence."""
-    launch_request = parse_launch_args(sys.argv[1:])
+    try:
+        launch_request = parse_launch_args(sys.argv[1:])
+    except Exception as exc:
+        logger.warning(f"Lỗi phân tích tham số khởi động: {exc}")
+        from main.windows_integration import LaunchRequest
+        launch_request = LaunchRequest()
 
     # If launched with items/protocol, attempt forwarding to an existing active instance first
     if launch_request.items:
