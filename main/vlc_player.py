@@ -5,7 +5,7 @@ Strictly adheres to specs.md §4.2 and Agent.md.
 """
 
 from pathlib import Path
-from typing import Callable, Optional, List
+from typing import Callable, Optional, List, Any
 import sys
 import tkinter as tk
 
@@ -66,6 +66,7 @@ class VLCPlayer:
         self._current_audio_url: Optional[str] = None
         self._current_subtitle_file: Optional[str] = None
         self._current_http_headers: Optional[dict] = None
+        self._stats_obj = None
 
         # Callbacks
         self._time_changed_callback: Optional[Callable[[int], None]] = None
@@ -401,6 +402,39 @@ class VLCPlayer:
         """Returns total media duration in milliseconds."""
         dur = self.player.get_length()
         return max(0, dur) if dur is not None else 0
+
+    def get_media_stats(self) -> Optional[Any]:
+        """
+        Return current media playback statistics (displayed_pictures, lost_pictures, etc.)
+        via libvlc_media_get_stats. Reuses cached MediaStats struct for zero-allocation performance.
+        Returns None if stats are unavailable.
+        """
+        if not self._current_media or not self._vlc_module:
+            return None
+        try:
+            if self._stats_obj is None:
+                self._stats_obj = self._vlc_module.MediaStats()
+            if self._current_media.get_stats(self._stats_obj):
+                return self._stats_obj
+        except Exception:
+            pass
+        return None
+
+    def resync_video(self) -> bool:
+        """
+        Resynchronize video pipeline with audio clock when video frames are falling behind
+        or dropping continuously. Flushes decoder queue and forces keyframe alignment.
+        """
+        if not self.player or not self.is_playing():
+            return False
+        try:
+            cur_time = self.get_position()
+            if cur_time > 0:
+                self.player.set_time(int(cur_time))
+                return True
+        except Exception:
+            pass
+        return False
 
     # --- Volume Controls ---
 

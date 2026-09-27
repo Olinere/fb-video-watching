@@ -125,14 +125,14 @@ Tất cả phím tắt dưới đây đều có thể tùy biến lại theo ý 
 
 ## 🧪 Kiểm thử tự động (Unit Tests)
 
-Dự án sở hữu bộ kiểm thử tự động toàn diện bao gồm **29 test files với 296 unit tests vượt qua 100%**:
+Dự án sở hữu bộ kiểm thử tự động toàn diện bao gồm **30 test files với 304 unit tests vượt qua 100%**:
 
 ```powershell
 .\.fbwenv\Scripts\python.exe -m unittest discover tests
 ```
 
 ```text
-Ran 296 tests in 62.702s
+Ran 304 tests in 77.786s
 OK
 ```
 

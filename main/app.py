@@ -320,8 +320,23 @@ class Application:
                 pass
 
             state = self.player.state
-            health = self.health_monitor.tick(state)
+            stats = self.player.get_media_stats() if self.player else None
+            raw_displayed = getattr(stats, "displayed_pictures", None) if stats else None
+            raw_lost = getattr(stats, "lost_pictures", None) if stats else None
+            displayed = raw_displayed if isinstance(raw_displayed, int) and not isinstance(raw_displayed, bool) else None
+            lost = raw_lost if isinstance(raw_lost, int) and not isinstance(raw_lost, bool) else None
+            health = self.health_monitor.tick(
+                state,
+                current_time_ms=current_ms,
+                displayed_pictures=displayed,
+                lost_pictures=lost,
+            )
             self._check_playback_health_degraded(health)
+            if health.video_frozen and state == "playing":
+                self._handle_video_frozen_resync(displayed, lost)
+            elif state == "playing":
+                self._consecutive_resyncs = 0
+
             try:
                 self.gui.set_play_pause_button_state(state == "playing")
             except Exception:
@@ -815,6 +830,39 @@ class Application:
                 self.gui.show_network_suggestion_prompt(msg, self.handle_switch_to_auto_profile)
         else:
             self.gui.show_osd_message("📶 Mạng không ổn định - Đang tự động tối ưu...")
+
+    def _handle_video_frozen_resync(self, displayed: Optional[int] = None, lost: Optional[int] = None) -> None:
+        """
+        Active A/V Resync handler: triggered when audio is playing forward but video frames
+        are completely frozen or dropping continuously due to --drop-late-frames.
+        """
+        now = time.monotonic()
+        last_resync = getattr(self, "_last_resync_time", 0.0)
+        # Cooldown: at least 4.0 seconds between resync attempts
+        if now - last_resync < 4.0:
+            return
+        self._last_resync_time = now
+        self._consecutive_resyncs = getattr(self, "_consecutive_resyncs", 0) + 1
+
+        logger.warning(
+            "Phát hiện hình ảnh bị đứng/vứt bỏ liên tục trong khi tiếng đang chạy "
+            "(displayed=%s, lost=%s). Kích hoạt A/V Active Resync (lần %d)...",
+            displayed, lost, self._consecutive_resyncs
+        )
+
+        # Tier 1: Micro-Seek Flush - realign video decoder pipeline to audio clock
+        if self.player and self.player.resync_video():
+            if hasattr(self.gui, "show_osd_message"):
+                self.gui.show_osd_message("🔄 Đang đồng bộ lại hình ảnh...")
+            self.health_monitor.reset_video_sync(now)
+
+        # Tier 2: If resynced >= 3 times consecutively and still frozen,
+        # video CDN stream has stalled/dropped completely -> soft reconnect
+        if self._consecutive_resyncs >= 3:
+            logger.warning("Đồng bộ nhanh không hiệu quả do luồng video mất kết nối CDN. Đang kết nối lại...")
+            self._consecutive_resyncs = 0
+            if self._original_url:
+                self.root.after(100, lambda: self.handle_play_request(self._original_url))
 
     def handle_switch_to_auto_profile(self) -> None:
         """Switch active domain or global source profile to 'auto' mode."""

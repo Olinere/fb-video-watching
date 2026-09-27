@@ -39,6 +39,22 @@ class TestProfilesAndHealth(unittest.TestCase):
         self.assertEqual(monitor.snapshot().state, "healthy")
         self.assertEqual(monitor.snapshot().buffering_ms, 0)
 
+    def test_video_frozen_detection_and_recovery(self):
+        monitor = PlaybackHealthMonitor()
+        # Normal playback with frames advancing
+        s1 = monitor.tick("playing", now=0.0, current_time_ms=1000, displayed_pictures=30, lost_pictures=0)
+        self.assertFalse(s1.video_frozen)
+
+        # Audio continues advancing to 4000ms (+3s), but displayed_pictures is stuck at 30 and lost_pictures jumps
+        monitor.tick("playing", now=1.0, current_time_ms=2000, displayed_pictures=30, lost_pictures=10)
+        monitor.tick("playing", now=2.0, current_time_ms=3000, displayed_pictures=30, lost_pictures=25)
+        s_frozen = monitor.tick("playing", now=3.0, current_time_ms=4000, displayed_pictures=30, lost_pictures=40)
+        self.assertTrue(s_frozen.video_frozen)
+
+        # After resync, displayed frames resume advancing
+        s_recovered = monitor.tick("playing", now=3.5, current_time_ms=4500, displayed_pictures=45, lost_pictures=40)
+        self.assertFalse(s_recovered.video_frozen)
+
 
 if __name__ == "__main__":
     unittest.main()
