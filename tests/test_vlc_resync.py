@@ -91,5 +91,70 @@ class TestVLCResync(unittest.TestCase):
                 mock_root.after.assert_called()
 
 
+
+
+class TestAsyncQueueTransition(unittest.TestCase):
+    """Tests for the 150ms async queue transition fix in VLCPlayer.play()."""
+
+    def test_play_with_url_change_schedules_after_150ms(self):
+        """When switching to a different URL, play() must schedule after(150ms) instead of
+        calling player directly, giving D3D11 Vout thread time to flush the old swapchain."""
+        mock_frame = MagicMock()
+        mock_frame.winfo_id.return_value = 12345
+        with patch("main.vlc_player.embed_vlc_in_frame"):
+            player = VLCPlayer(mock_frame)
+            player._current_url = "http://old_stream_url"
+            player._current_media = None
+            player.player = MagicMock()
+            player.instance = MagicMock()
+            player.instance.media_new.return_value = MagicMock()
+
+            player.play("http://new_stream_url")
+
+            player.player.stop.assert_called_once()
+            mock_frame.after.assert_called_once()
+            call_args = mock_frame.after.call_args
+            self.assertEqual(call_args[0][0], 150, "Delay must be exactly 150ms")
+            player.player.play.assert_not_called()
+
+    def test_play_with_first_url_calls_load_directly(self):
+        """When no previous URL (first play), play() must call _load_and_start_media directly
+        without any delay — the 150ms buffer is only needed for queue transitions."""
+        mock_frame = MagicMock()
+        mock_frame.winfo_id.return_value = 12345
+        with patch("main.vlc_player.embed_vlc_in_frame"):
+            player = VLCPlayer(mock_frame)
+            player._current_url = None
+            player._current_media = None
+            player.player = MagicMock()
+            player.instance = MagicMock()
+            player.instance.media_new.return_value = MagicMock()
+
+            with patch.object(player, "_load_and_start_media") as mock_load:
+                player.play("http://first_stream_url")
+                mock_load.assert_called_once_with(
+                    "http://first_stream_url", None, None, None, None
+                )
+                mock_frame.after.assert_not_called()
+
+    def test_play_with_same_url_reloads_without_delay(self):
+        """When called with the same URL (e.g. stream reconnect), must reload without 150ms delay."""
+        mock_frame = MagicMock()
+        mock_frame.winfo_id.return_value = 12345
+        with patch("main.vlc_player.embed_vlc_in_frame"):
+            player = VLCPlayer(mock_frame)
+            player._current_url = "http://same_url"
+            player._current_media = None
+            player.player = MagicMock()
+            player.instance = MagicMock()
+            player.instance.media_new.return_value = MagicMock()
+
+            with patch.object(player, "_load_and_start_media") as mock_load:
+                player.play("http://same_url")
+                mock_load.assert_called_once()
+                mock_frame.after.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
+

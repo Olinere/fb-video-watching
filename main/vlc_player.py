@@ -136,58 +136,41 @@ class VLCPlayer:
             self._current_subtitle_file = subtitle_file
 
         if stream_url:
+            # Save previous URL before overwriting, to detect queue switches
+            _prev_url = self._current_url
             self._current_url = stream_url
             self._current_audio_url = audio_url
             if http_headers is not None:
                 self._current_http_headers = http_headers
 
-            # Stop existing playback before swapping media to cleanly reset decoders
-            try:
-                self.player.stop()
-            except Exception:
-                pass
-
-            if self._current_media:
+            # When switching to a different video URL: stop cleanly, release media,
+            # then delay 150ms so the Direct3D 11 Vout render thread has time to
+            # flush its swapchain and release the HWND before we create a new media.
+            # This prevents the "reusing provided vout" + GPU ring-buffer stall that
+            # causes video freeze after ~3 minutes in a queue transition.
+            if _prev_url and _prev_url != stream_url:
                 try:
-                    self._current_media.release()
+                    self.player.stop()
                 except Exception:
                     pass
-                self._current_media = None
+                if self._current_media:
+                    try:
+                        self._current_media.release()
+                    except Exception:
+                        pass
+                    self._current_media = None
 
-            self._current_media = self.instance.media_new(stream_url)
+                # Schedule media load after 150ms buffer so D3D11 Vout can flush cleanly
+                self.parent_frame.after(150, lambda: self._load_and_start_media(
+                    stream_url, audio_url, subtitle_file, http_headers, network_caching_ms
+                ))
+                return
 
-            if network_caching_ms is not None and int(network_caching_ms) > 0:
-                self._current_media.add_option(f":network-caching={int(network_caching_ms)}")
+            # First play (no previous URL) or same URL: load directly without delay
+            self._load_and_start_media(stream_url, audio_url, subtitle_file, http_headers, network_caching_ms)
+            return
 
-            # Apply custom HTTP headers (Referer, User-Agent, Cookie) if required by CDN (e.g. Pornhub, Bilibili)
-            active_headers = http_headers or self._current_http_headers
-            if active_headers:
-                referer = active_headers.get("Referer") or active_headers.get("referer")
-                if referer:
-                    self._current_media.add_option(f":http-referrer={referer}")
-                ua = active_headers.get("User-Agent") or active_headers.get("user-agent")
-                if ua:
-                    self._current_media.add_option(f":http-user-agent={ua}")
-                cookie = active_headers.get("Cookie") or active_headers.get("cookie")
-                if cookie:
-                    self._current_media.add_option(f":http-cookie={cookie}")
-
-            self.player.set_media(self._current_media)
-
-            # Synchronize separate audio track if present (§7.1)
-            if audio_url:
-                vlc = self._vlc_module
-                self.player.add_slave(vlc.MediaSlaveType.audio, audio_url, True)
-
-            # Attach external subtitle track if present
-            if self._current_subtitle_file and Path(self._current_subtitle_file).is_file():
-                vlc = self._vlc_module
-                try:
-                    resolved_sub = str(Path(self._current_subtitle_file).resolve())
-                    self.player.add_slave(vlc.MediaSlaveType.subtitle, resolved_sub, True)
-                except Exception:
-                    pass
-
+        # Resume current media (no stream_url provided)
         # Refresh embedding handle if changed (e.g. undocking/docking PiP)
         handle = self.parent_frame.winfo_id()
         if self._embedded_handle != handle:
@@ -196,8 +179,86 @@ class VLCPlayer:
             self._embedded_handle = handle
 
         vlc = self._vlc_module
-        if not stream_url and self.player.get_state() == vlc.State.Ended:
+        if self.player.get_state() == vlc.State.Ended:
             self.player.stop()
+
+        self.player.play()
+
+        # Re-apply subtitle after playback begins if attached
+        if self._current_subtitle_file and Path(self._current_subtitle_file).is_file():
+            try:
+                resolved_sub = str(Path(self._current_subtitle_file).resolve())
+                self.player.video_set_subtitle_file(resolved_sub)
+            except Exception:
+                pass
+
+    def _load_and_start_media(
+        self,
+        stream_url: str,
+        audio_url: Optional[str] = None,
+        subtitle_file: Optional[str] = None,
+        http_headers: Optional[dict] = None,
+        network_caching_ms: Optional[int] = None,
+    ) -> None:
+        """
+        Internal helper: create media, configure options, embed HWND, and start playback.
+        Called directly for first play or same-URL replay, or deferred via after(150,...) for
+        queue transitions to allow the Direct3D 11 Vout thread to cleanly release the old
+        swapchain first before we bind a new media surface.
+        """
+        # Stop existing playback before swapping media to cleanly reset decoders
+        try:
+            self.player.stop()
+        except Exception:
+            pass
+
+        if self._current_media:
+            try:
+                self._current_media.release()
+            except Exception:
+                pass
+            self._current_media = None
+
+        self._current_media = self.instance.media_new(stream_url)
+
+        if network_caching_ms is not None and int(network_caching_ms) > 0:
+            self._current_media.add_option(f":network-caching={int(network_caching_ms)}")
+
+        # Apply custom HTTP headers (Referer, User-Agent, Cookie) if required by CDN
+        active_headers = http_headers or self._current_http_headers
+        if active_headers:
+            referer = active_headers.get("Referer") or active_headers.get("referer")
+            if referer:
+                self._current_media.add_option(f":http-referrer={referer}")
+            ua = active_headers.get("User-Agent") or active_headers.get("user-agent")
+            if ua:
+                self._current_media.add_option(f":http-user-agent={ua}")
+            cookie = active_headers.get("Cookie") or active_headers.get("cookie")
+            if cookie:
+                self._current_media.add_option(f":http-cookie={cookie}")
+
+        self.player.set_media(self._current_media)
+
+        # Synchronize separate audio track if present (§7.1)
+        if audio_url:
+            vlc = self._vlc_module
+            self.player.add_slave(vlc.MediaSlaveType.audio, audio_url, True)
+
+        # Attach external subtitle track if present
+        if self._current_subtitle_file and Path(self._current_subtitle_file).is_file():
+            vlc = self._vlc_module
+            try:
+                resolved_sub = str(Path(self._current_subtitle_file).resolve())
+                self.player.add_slave(vlc.MediaSlaveType.subtitle, resolved_sub, True)
+            except Exception:
+                pass
+
+        # Refresh embedding handle if changed (e.g. undocking/docking PiP)
+        handle = self.parent_frame.winfo_id()
+        if self._embedded_handle != handle:
+            self.parent_frame.update_idletasks()
+            embed_vlc_in_frame(self.player, self.parent_frame)
+            self._embedded_handle = handle
 
         self.player.play()
 
