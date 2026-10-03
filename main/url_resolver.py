@@ -30,9 +30,7 @@ from main.extractors import (
     NetworkError,
     LocalFileExtractor,
     TelegramExtractor,
-    VLXXExtractor,
-    SexVietNewExtractor,
-    XNhauExtractor,
+    GenericWebExtractor,
     YouTubeExtractor,
     GenericExtractor,
     get_extractor,
@@ -135,7 +133,8 @@ def is_potential_video_url(url: str) -> bool:
     video_path_keywords = (
         "/video/", "/watch", "/reel/", "/reels/", "/shorts/",
         "/clip/", "/clips/", "/embed/", "/tv/", "/media/",
-        "/play/", "/stream/", "/v/", "/hentai/",
+        "/play/", "/stream/", "/v/", "/hentai/", "/movie/",
+        "/phim/", "/episode/", "/anime/",
     )
     if any(kw in path for kw in video_path_keywords):
         return True
@@ -163,22 +162,13 @@ def is_collection_url(url: str) -> bool:
 def _preprocess_special_url(url: str, timeout: int = 8) -> Tuple[str, Optional[str], Optional[str]]:
     """
     Bridge method for backward compatibility.
-    Delegates to specialized extractors (VLXX, SexVietNew, XNhau).
+    Delegates to GenericWebExtractor.
     """
-    u_lower = url.lower()
-    if "vlxx" in u_lower:
-        vlxx_ext = VLXXExtractor()
-        stream_url, title, thumb = vlxx_ext.resolve_vlxx_url(url, timeout=timeout)
+    try:
+        stream_url, title, thumb = GenericWebExtractor().resolve_stream(url, timeout=timeout)
         return stream_url or url, title, thumb
-    elif "sexvietnew" in u_lower:
-        svn_ext = SexVietNewExtractor()
-        stream_url, title, thumb = svn_ext.resolve_sexvietnew_url(url, timeout=timeout)
-        return stream_url or url, title, thumb
-    elif "xnhau" in u_lower:
-        xnhau_ext = XNhauExtractor()
-        stream_url, title, thumb = xnhau_ext.resolve_xnhau_url(url, timeout=timeout)
-        return stream_url or url, title, thumb
-    return url, None, None
+    except Exception:
+        return url, None, None
 
 
 def resolve_facebook_url(
