@@ -22,6 +22,7 @@ from main.extractors.base import (
 from main.collection import CollectionEntry, ResolvedCollection
 from main.chapters import Chapter
 from main.extractors.generic import GenericExtractor
+from main.extractors.hentaiz import HentaiZExtractor
 from main.extractors.local import LocalFileExtractor, is_local_media_file
 from main.extractors.sexvietnew import SexVietNewExtractor
 from main.extractors.telegram import TelegramExtractor
@@ -37,6 +38,7 @@ EXTRACTOR_REGISTRY: List[Type[BaseExtractor]] = [
     VLXXExtractor,
     SexVietNewExtractor,
     XNhauExtractor,
+    HentaiZExtractor,
     YouTubeExtractor,
     GenericExtractor,
 ]
@@ -71,6 +73,7 @@ __all__ = [
     "VLXXExtractor",
     "SexVietNewExtractor",
     "XNhauExtractor",
+    "HentaiZExtractor",
     "YouTubeExtractor",
     "GenericExtractor",
     "EXTRACTOR_REGISTRY",

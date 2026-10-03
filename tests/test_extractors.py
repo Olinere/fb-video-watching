@@ -13,6 +13,7 @@ from main.extractors import (
     VLXXExtractor,
     SexVietNewExtractor,
     XNhauExtractor,
+    HentaiZExtractor,
     YouTubeExtractor,
     GenericExtractor,
     get_extractor,
@@ -92,6 +93,19 @@ class TestExtractorArchitecture(unittest.TestCase):
             with self.subTest(url=url):
                 ext = get_extractor(url)
                 self.assertIsInstance(ext, XNhauExtractor)
+
+    def test_hentaiz_extractor_selection(self):
+        """Verify get_extractor selects HentaiZExtractor for hentaivietsub and hentaiz URLs."""
+        urls = [
+            "https://hentaivietsub.com/hentai/fella-pure-mitarashi-san-chi-no-jijou-the-animation-1",
+            "https://hentaiz.bot/hentai/fella-pure-mitarashi-san-chi-no-jijou-the-animation-1",
+            "https://hentaivietsub.net/hentai/test-1",
+            "https://hentaiz.vip/hentai/test-2",
+        ]
+        for url in urls:
+            with self.subTest(url=url):
+                ext = get_extractor(url)
+                self.assertIsInstance(ext, HentaiZExtractor)
 
     def test_generic_extractor_fallback(self):
         """Verify get_extractor falls back to GenericExtractor for Facebook, TikTok, Pornhub, etc."""

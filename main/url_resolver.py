@@ -115,7 +115,7 @@ def is_potential_video_url(url: str) -> bool:
         "twitch.tv", "vimeo.com", "dailymotion.com", "rumble.com",
         "t.me", "telegram.org", "telegram.me",
         # Adult platforms
-        "vlxx", "sexvietnew", "xnhau",
+        "vlxx", "sexvietnew", "xnhau", "hentaivietsub", "hentaiz",
         "pornhub.com", "xvideos.com", "xnxx.com", "spankbang.com",
         "redtube.com", "youporn.com", "beeg.com", "xhamster.com",
         "doodstream", "streamtape", "filemoon", "streamwish", "luluvdo",
@@ -135,7 +135,7 @@ def is_potential_video_url(url: str) -> bool:
     video_path_keywords = (
         "/video/", "/watch", "/reel/", "/reels/", "/shorts/",
         "/clip/", "/clips/", "/embed/", "/tv/", "/media/",
-        "/play/", "/stream/", "/v/",
+        "/play/", "/stream/", "/v/", "/hentai/",
     )
     if any(kw in path for kw in video_path_keywords):
         return True

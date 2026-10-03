@@ -180,11 +180,14 @@ class StreamProxyHandler(http.server.BaseHTTPRequestHandler):
                 else:
                     full_seg_url = urllib.parse.urljoin(base_url, line_str)
 
-                # Rewrite segment to route through local proxy
+                # Rewrite segment or sub-playlist to route through local proxy
                 query_dict = {"url": full_seg_url}
                 if referer:
                     query_dict["referer"] = referer
-                proxied_seg = f"http://{server_host}/segment.ts?{urllib.parse.urlencode(query_dict)}"
+                if ".m3u8" in full_seg_url.lower():
+                    proxied_seg = f"http://{server_host}/playlist.m3u8?{urllib.parse.urlencode(query_dict)}"
+                else:
+                    proxied_seg = f"http://{server_host}/segment.ts?{urllib.parse.urlencode(query_dict)}"
                 out_lines.append(proxied_seg)
 
             body = "\n".join(out_lines).encode("utf-8")
