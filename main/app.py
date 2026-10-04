@@ -1004,13 +1004,32 @@ class Application:
             except Exception:
                 pass
 
+        # Prepare subtitle according to 3 mutually exclusive options (Local / Web / AI / None)
+        active_sub_file = None
+        sub_cfg = self.settings.get("subtitle", default={})
+        if isinstance(sub_cfg, dict) and sub_cfg.get("enabled", True):
+            try:
+                from main.subtitle import SubtitleDispatcher
+                media_info = {
+                    "id": resolved.content_id or "stream",
+                    "subtitles": resolved.subtitles or {},
+                    "automatic_captions": resolved.automatic_captions or {},
+                }
+                active_sub_file = SubtitleDispatcher.resolve_subtitle_for_stream(
+                    video_url=original_url,
+                    info_dict=media_info,
+                    sub_settings=sub_cfg,
+                    video_id=resolved.content_id,
+                )
+            except Exception as e:
+                logger.warning(f"Error resolving subtitle: {e}")
+
         # Start playback via VLC
-        sub_file = self.settings.get("subtitle", "file", default="")
         profile = resolve_profile(self.settings.settings, original_url)
         self.player.play(
             resolved.stream_url,
             audio_url=resolved.audio_url,
-            subtitle_file=sub_file if sub_file else None,
+            subtitle_file=active_sub_file,
             http_headers=resolved.http_headers,
             network_caching_ms=profile.network_caching_ms,
         )
@@ -1548,10 +1567,14 @@ class Application:
         if self.player:
             self.player.reinit_instance(self.vlc_args)
 
-        # Apply updated subtitle file to player if active
-        sub_file = self.settings.get("subtitle", "file", default="")
-        if self.player:
-            self.player.set_subtitle_file(sub_file if sub_file else None)
+        # Apply updated subtitle settings to player if active
+        sub_cfg = self.settings.get("subtitle", default={})
+        if self.player and isinstance(sub_cfg, dict):
+            if not sub_cfg.get("enabled", True) or sub_cfg.get("source_option") == "none":
+                self.player.clear_subtitle()
+            elif sub_cfg.get("source_option") == "local":
+                sub_file = sub_cfg.get("file", "")
+                self.player.set_subtitle_file(sub_file if sub_file else None)
 
         if hasattr(self.gui, "update_seek_buttons"):
             self.gui.update_seek_buttons()
@@ -1797,6 +1820,13 @@ class Application:
         try:
             from main.extractors.youtube import cleanup_hls_cache
             cleanup_hls_cache()
+        except Exception:
+            pass
+
+        # Dọn sạch file phụ đề tạm trong %TEMP%/fbw_subs (§16.4 Xài xong dọn)
+        try:
+            from main.subtitle import TempSubtitleManager
+            TempSubtitleManager.get_instance().cleanup_all()
         except Exception:
             pass
 

@@ -1,7 +1,5 @@
 """
-Subtitle management module.
-Supports validation and format identification for all major subtitle formats (.srt, .vtt, .ass, .ssa, .sub, .smi, etc.),
-color conversion for libVLC, and dynamic subtitle argument generation.
+Core Subtitle Engine: format validation, color conversion, and libVLC styling arguments.
 """
 
 from pathlib import Path

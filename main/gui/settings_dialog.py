@@ -82,7 +82,18 @@ class SettingsDialog:
         sub_cfg = self.settings.get("subtitle", default={})
         if not isinstance(sub_cfg, dict):
             sub_cfg = {}
+        self.sub_enabled_var = tk.BooleanVar(value=bool(sub_cfg.get("enabled", True)))
+        self.sub_source_option_var = tk.StringVar(value=str(sub_cfg.get("source_option", "web")))
         self.sub_file_var = tk.StringVar(value=str(sub_cfg.get("file", "")))
+        self.sub_yt_prefer_orig_var = tk.BooleanVar(value=bool(sub_cfg.get("youtube_prefer_original", True)))
+        self.sub_yt_auto_trans_var = tk.BooleanVar(value=bool(sub_cfg.get("youtube_auto_translate", True)))
+        self.sub_fb_prefer_orig_var = tk.BooleanVar(value=bool(sub_cfg.get("facebook_prefer_original", True)))
+        self.sub_fb_allow_auto_var = tk.BooleanVar(value=bool(sub_cfg.get("facebook_allow_auto", True)))
+        self.sub_target_lang_var = tk.StringVar(value=str(sub_cfg.get("target_lang", "vi")))
+        self.sub_ai_endpoint_var = tk.StringVar(value=str(sub_cfg.get("ai_endpoint", "https://api.openai.com/v1")))
+        self.sub_ai_api_key_var = tk.StringVar(value=str(sub_cfg.get("ai_api_key", "")))
+        self.sub_ai_model_var = tk.StringVar(value=str(sub_cfg.get("ai_model", "gpt-4o-mini")))
+
         self.sub_font_var = tk.StringVar(value=str(sub_cfg.get("font_family", "Segoe UI")))
         self.sub_size_var = tk.StringVar(value=str(sub_cfg.get("font_size", 36)))
         self.sub_text_color_var = tk.StringVar(value=str(sub_cfg.get("text_color", "#ffffff")))
@@ -1272,13 +1283,40 @@ class SettingsDialog:
                 self.hotkey_vars[aid].set(default_val)
 
     def _build_subtitles_tab(self, colors: Optional[Dict[str, str]] = None) -> None:
-        """Subtitle settings tab with multi-format validation, styling controls, and live preview."""
+        """Subtitle settings tab with 3 mutually exclusive sources, styling controls, and live preview."""
         if colors is None:
             colors = self.theme.PALETTES[self.theme.current_theme]
 
         tab = self.tab_subtitles
 
-        cols_frame = tk.Frame(tab, bg=colors["bg"], padx=14, pady=6)
+        # Scrollable container for comfort across all screen sizes
+        canvas = tk.Canvas(tab, bg=colors["bg"], highlightthickness=0)
+        v_scrollbar = ttk.Scrollbar(tab, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=v_scrollbar.set)
+
+        v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        scrollable_frame = tk.Frame(canvas, bg=colors["bg"])
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+        win_id = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+
+        def _on_canvas_configure(event):
+            canvas.itemconfig(win_id, width=event.width)
+            scrollable_frame.configure(width=event.width)
+
+        canvas.bind("<Configure>", _on_canvas_configure)
+
+        def _on_mousewheel(event):
+            if canvas.winfo_exists():
+                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        scrollable_frame.bind("<MouseWheel>", _on_mousewheel)
+
+        cols_frame = tk.Frame(scrollable_frame, bg=colors["bg"], padx=14, pady=6)
         cols_frame.pack(fill=tk.BOTH, expand=True)
         cols_frame.grid_columnconfigure(0, weight=1, uniform="col")
         cols_frame.grid_columnconfigure(1, weight=1, uniform="col")
@@ -1289,10 +1327,10 @@ class SettingsDialog:
         right_col = tk.Frame(cols_frame, bg=colors["bg"])
         right_col.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
 
-        # --- Left Col Card 1: Nạp tệp phụ đề ---
-        card_file = tk.LabelFrame(
+        # --- Left Col Card 1: Chọn Nguồn Phụ Đề (Chỉ chọn 1 trong 3) ---
+        card_source = tk.LabelFrame(
             left_col,
-            text=" Nạp tệp phụ đề (Subtitle Loader) ",
+            text=" Nguồn phụ đề (Chọn 1 trong 3) ",
             bg=colors["bg"],
             fg=colors["accent"],
             font=("Segoe UI", 9, "bold"),
@@ -1301,19 +1339,74 @@ class SettingsDialog:
             padx=12,
             pady=8,
         )
-        card_file.pack(fill=tk.X, pady=(0, 6))
-        card_file.columnconfigure(1, weight=1)
+        card_source.pack(fill=tk.X, pady=(0, 6))
+
+        # Master enable toggle
+        chk_sub_enable = tk.Checkbutton(
+            card_source,
+            text="Bật hiển thị phụ đề (Enable Subtitles)",
+            variable=self.sub_enabled_var,
+            bg=colors["bg"],
+            fg=colors["fg"],
+            selectcolor=colors["entry_bg"],
+            activebackground=colors["bg"],
+            activeforeground=colors["fg"],
+            highlightthickness=0,
+            font=("Segoe UI", 9, "bold"),
+        )
+        chk_sub_enable.pack(anchor=tk.W, pady=(0, 6))
+
+        # Radio Group for 3 mutually exclusive options
+        radio_opts = [
+            ("local", "1. Chọn tệp cục bộ (.srt, .vtt, .ass...)"),
+            ("web", "2. Có sẵn của web (YouTube, Facebook...)"),
+            ("ai", "3. Dịch bằng A.I (OpenAI completion standard)"),
+        ]
+        for val, label in radio_opts:
+            rb = tk.Radiobutton(
+                card_source,
+                text=label,
+                value=val,
+                variable=self.sub_source_option_var,
+                bg=colors["bg"],
+                fg=colors["fg"],
+                selectcolor=colors["entry_bg"],
+                activebackground=colors["bg"],
+                activeforeground=colors["accent"],
+                highlightthickness=0,
+                font=("Segoe UI", 9),
+                command=self._on_sub_source_changed,
+            )
+            rb.pack(anchor=tk.W, pady=2)
+
+        # --- Left Col Card 2: Chi tiết nguồn phụ đề được chọn ---
+        self.card_details = tk.LabelFrame(
+            left_col,
+            text=" Cấu hình nguồn phụ đề ",
+            bg=colors["bg"],
+            fg=colors["accent"],
+            font=("Segoe UI", 9, "bold"),
+            bd=1,
+            relief=tk.SOLID,
+            padx=12,
+            pady=8,
+        )
+        self.card_details.pack(fill=tk.X, pady=(0, 6))
+
+        # Option 1 Frame: Local File
+        self.frame_opt_local = tk.Frame(self.card_details, bg=colors["bg"])
+        self.frame_opt_local.columnconfigure(1, weight=1)
 
         tk.Label(
-            card_file,
-            text="Đường dẫn:",
+            self.frame_opt_local,
+            text="Đường dẫn file:",
             bg=colors["bg"],
             fg=colors["fg"],
             font=("Segoe UI", 9),
         ).grid(row=0, column=0, sticky=tk.W, pady=3)
 
         entry_file = tk.Entry(
-            card_file,
+            self.frame_opt_local,
             textvariable=self.sub_file_var,
             font=("Segoe UI", 8),
             bg=colors["entry_bg"],
@@ -1326,7 +1419,7 @@ class SettingsDialog:
         )
         entry_file.grid(row=0, column=1, sticky=tk.EW, padx=6, pady=3)
 
-        btn_box = tk.Frame(card_file, bg=colors["bg"])
+        btn_box = tk.Frame(self.frame_opt_local, bg=colors["bg"])
         btn_box.grid(row=0, column=2, sticky=tk.E)
 
         btn_browse = tk.Button(
@@ -1363,9 +1456,8 @@ class SettingsDialog:
         )
         btn_clear_sub.pack(side=tk.LEFT)
 
-        # Status badge label
         self.lbl_sub_badge = tk.Label(
-            card_file,
+            self.frame_opt_local,
             text="(Chưa nạp tệp phụ đề nào)",
             font=("Segoe UI", 8),
             bg=colors["bg"],
@@ -1376,7 +1468,6 @@ class SettingsDialog:
         )
         self.lbl_sub_badge.grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=(2, 2))
 
-        # Initial badge check
         cur_file = self.sub_file_var.get().strip()
         if cur_file:
             is_valid, fmt_name, _ = validate_subtitle_file(cur_file)
@@ -1385,16 +1476,227 @@ class SettingsDialog:
             else:
                 self.lbl_sub_badge.configure(text=f"⚠ Tệp không hợp lệ: {Path(cur_file).name}", fg="#ef4444")
 
-        # Supported format hint
         tk.Label(
-            card_file,
+            self.frame_opt_local,
             text="Hỗ trợ: .srt, .vtt, .ass, .ssa, .sub, .smi, .idx, .txt, .lrc, .ttml, .dfxp",
             font=("Segoe UI", 7),
             bg=colors["bg"],
             fg=colors["disabled"],
         ).grid(row=2, column=0, columnspan=3, sticky=tk.W)
 
-        # --- Left Col Card 2: Phông chữ & Định dạng chữ ---
+        # Option 2 Frame: Web Platform Captions
+        self.frame_opt_web = tk.Frame(self.card_details, bg=colors["bg"])
+
+        # YouTube Sub-card
+        yt_group = tk.LabelFrame(
+            self.frame_opt_web,
+            text=" YouTube Captions ",
+            bg=colors["bg"],
+            fg=colors["fg"],
+            font=("Segoe UI", 8, "bold"),
+            bd=1,
+            relief=tk.SOLID,
+            padx=8,
+            pady=4,
+        )
+        yt_group.pack(fill=tk.X, pady=(0, 4))
+
+        tk.Checkbutton(
+            yt_group,
+            text="Lấy phụ đề gốc của tác giả (Creator uploaded)",
+            variable=self.sub_yt_prefer_orig_var,
+            bg=colors["bg"],
+            fg=colors["fg"],
+            selectcolor=colors["entry_bg"],
+            activebackground=colors["bg"],
+            activeforeground=colors["fg"],
+            highlightthickness=0,
+            font=("Segoe UI", 8),
+        ).pack(anchor=tk.W, pady=1)
+
+        tk.Checkbutton(
+            yt_group,
+            text="Dịch tự động của YouTube (TimedText tlang)",
+            variable=self.sub_yt_auto_trans_var,
+            bg=colors["bg"],
+            fg=colors["fg"],
+            selectcolor=colors["entry_bg"],
+            activebackground=colors["bg"],
+            activeforeground=colors["fg"],
+            highlightthickness=0,
+            font=("Segoe UI", 8),
+        ).pack(anchor=tk.W, pady=1)
+
+        # Facebook Sub-card
+        fb_group = tk.LabelFrame(
+            self.frame_opt_web,
+            text=" Facebook Captions ",
+            bg=colors["bg"],
+            fg=colors["fg"],
+            font=("Segoe UI", 8, "bold"),
+            bd=1,
+            relief=tk.SOLID,
+            padx=8,
+            pady=4,
+        )
+        fb_group.pack(fill=tk.X, pady=(0, 4))
+
+        tk.Checkbutton(
+            fb_group,
+            text="Lấy phụ đề gốc của video",
+            variable=self.sub_fb_prefer_orig_var,
+            bg=colors["bg"],
+            fg=colors["fg"],
+            selectcolor=colors["entry_bg"],
+            activebackground=colors["bg"],
+            activeforeground=colors["fg"],
+            highlightthickness=0,
+            font=("Segoe UI", 8),
+        ).pack(anchor=tk.W, pady=1)
+
+        tk.Checkbutton(
+            fb_group,
+            text="Lấy phụ đề tự sinh của Facebook (Auto-captions)",
+            variable=self.sub_fb_allow_auto_var,
+            bg=colors["bg"],
+            fg=colors["fg"],
+            selectcolor=colors["entry_bg"],
+            activebackground=colors["bg"],
+            activeforeground=colors["fg"],
+            highlightthickness=0,
+            font=("Segoe UI", 8),
+        ).pack(anchor=tk.W, pady=1)
+
+        # Target language row
+        lang_row = tk.Frame(self.frame_opt_web, bg=colors["bg"])
+        lang_row.pack(fill=tk.X, pady=(4, 2))
+        tk.Label(
+            lang_row,
+            text="Ngôn ngữ ưu tiên:",
+            bg=colors["bg"],
+            fg=colors["fg"],
+            font=("Segoe UI", 8),
+        ).pack(side=tk.LEFT, padx=(0, 6))
+
+        combo_lang = ttk.Combobox(
+            lang_row,
+            textvariable=self.sub_target_lang_var,
+            values=["vi", "en", "ja", "ko", "zh", "fr", "de", "es"],
+            state="readonly",
+            width=8,
+        )
+        combo_lang.pack(side=tk.LEFT)
+
+        tk.Label(
+            self.frame_opt_web,
+            text="* Trích xuất trực tiếp từ máy chủ YouTube/Facebook, 100% miễn phí, không tốn API.",
+            font=("Segoe UI", 7, "italic"),
+            bg=colors["bg"],
+            fg=colors["disabled"],
+        ).pack(anchor=tk.W, pady=(2, 0))
+
+        # Option 3 Frame: AI Translation
+        self.frame_opt_ai = tk.Frame(self.card_details, bg=colors["bg"])
+        self.frame_opt_ai.columnconfigure(1, weight=1)
+
+        tk.Label(
+            self.frame_opt_ai,
+            text="API Endpoint:",
+            bg=colors["bg"],
+            fg=colors["fg"],
+            font=("Segoe UI", 8),
+        ).grid(row=0, column=0, sticky=tk.W, pady=2)
+
+        entry_endpoint = tk.Entry(
+            self.frame_opt_ai,
+            textvariable=self.sub_ai_endpoint_var,
+            font=("Segoe UI", 8),
+            bg=colors["entry_bg"],
+            fg=colors["entry_fg"],
+            insertbackground=colors["fg"],
+            relief=tk.FLAT,
+            highlightthickness=1,
+            highlightbackground=colors["border"],
+            highlightcolor=colors["accent"],
+        )
+        entry_endpoint.grid(row=0, column=1, sticky=tk.EW, padx=6, pady=2)
+
+        tk.Label(
+            self.frame_opt_ai,
+            text="Tên Model:",
+            bg=colors["bg"],
+            fg=colors["fg"],
+            font=("Segoe UI", 8),
+        ).grid(row=1, column=0, sticky=tk.W, pady=2)
+
+        entry_model = tk.Entry(
+            self.frame_opt_ai,
+            textvariable=self.sub_ai_model_var,
+            font=("Segoe UI", 8),
+            bg=colors["entry_bg"],
+            fg=colors["entry_fg"],
+            insertbackground=colors["fg"],
+            relief=tk.FLAT,
+            highlightthickness=1,
+            highlightbackground=colors["border"],
+            highlightcolor=colors["accent"],
+        )
+        entry_model.grid(row=1, column=1, sticky=tk.EW, padx=6, pady=2)
+
+        tk.Label(
+            self.frame_opt_ai,
+            text="API Key:",
+            bg=colors["bg"],
+            fg=colors["fg"],
+            font=("Segoe UI", 8),
+        ).grid(row=2, column=0, sticky=tk.W, pady=2)
+
+        key_box = tk.Frame(self.frame_opt_ai, bg=colors["bg"])
+        key_box.grid(row=2, column=1, sticky=tk.EW, padx=6, pady=2)
+        key_box.columnconfigure(0, weight=1)
+
+        self.entry_ai_key = tk.Entry(
+            key_box,
+            textvariable=self.sub_ai_api_key_var,
+            show="*",
+            font=("Segoe UI", 8),
+            bg=colors["entry_bg"],
+            fg=colors["entry_fg"],
+            insertbackground=colors["fg"],
+            relief=tk.FLAT,
+            highlightthickness=1,
+            highlightbackground=colors["border"],
+            highlightcolor=colors["accent"],
+        )
+        self.entry_ai_key.grid(row=0, column=0, sticky=tk.EW)
+
+        self.btn_show_ai_key = tk.Button(
+            key_box,
+            text="👁",
+            font=("Segoe UI", 8),
+            bg=colors["surface_variant"],
+            fg=colors["fg"],
+            relief=tk.FLAT,
+            bd=0,
+            padx=6,
+            pady=1,
+            cursor="hand2",
+            command=self._toggle_show_ai_api_key,
+        )
+        self.btn_show_ai_key.grid(row=0, column=1, padx=(4, 0))
+
+        tk.Label(
+            self.frame_opt_ai,
+            text="* Hỗ trợ chuẩn OpenAI /v1/chat/completions (OpenAI, Gemini, Groq, DeepSeek, Ollama).",
+            font=("Segoe UI", 7, "italic"),
+            bg=colors["bg"],
+            fg=colors["disabled"],
+        ).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=(4, 0))
+
+        # Activate initial source option display
+        self._on_sub_source_changed()
+
+        # --- Left Col Card 3: Phông chữ & Định dạng chữ ---
         card_font = tk.LabelFrame(
             left_col,
             text=" Định dạng văn bản & Phông chữ ",
@@ -1449,7 +1751,7 @@ class SettingsDialog:
         )
         combo_size.grid(row=1, column=1, sticky=tk.W, padx=6, pady=3)
 
-        # Typography checkbuttons: Bold, Italic ("Italy"), Underline ("Under")
+        # Typography checkbuttons: Bold, Italic, Underline
         typo_frame = tk.Frame(card_font, bg=colors["bg"])
         typo_frame.grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=(4, 4))
 
@@ -1528,7 +1830,7 @@ class SettingsDialog:
         )
         self.lbl_text_color.pack(side=tk.LEFT)
 
-        # --- Right Col Card 3: Viền & Nền phụ đề ---
+        # --- Right Col Card 4: Viền & Nền phụ đề ---
         card_border = tk.LabelFrame(
             right_col,
             text=" Viền & Nền phụ đề (Outline & Background) ",
@@ -1687,7 +1989,7 @@ class SettingsDialog:
         )
         self.lbl_opacity_val.pack(side=tk.LEFT, padx=(4, 0))
 
-        # --- Right Col Card 4: Xem trước trực tiếp (Live Preview) ---
+        # --- Right Col Card 5: Xem trước trực tiếp (Live Preview) ---
         card_preview = tk.LabelFrame(
             right_col,
             text=" Xem trước trực tiếp (Live Preview) ",
@@ -1761,6 +2063,38 @@ class SettingsDialog:
 
         # Initial preview draw
         self._schedule_subtitle_preview(50)
+
+    def _on_sub_source_changed(self) -> None:
+        """Switch visibility between the 3 mutually exclusive subtitle configuration panels."""
+        if not hasattr(self, "frame_opt_local") or not hasattr(self, "frame_opt_web") or not hasattr(self, "frame_opt_ai"):
+            return
+
+        opt = self.sub_source_option_var.get()
+        # Unpack all first
+        self.frame_opt_local.pack_forget()
+        self.frame_opt_web.pack_forget()
+        self.frame_opt_ai.pack_forget()
+
+        if opt == "local":
+            self.frame_opt_local.pack(fill=tk.X, expand=True)
+            self.card_details.configure(text=" Cấu hình: 1. Tệp cục bộ ")
+        elif opt == "web":
+            self.frame_opt_web.pack(fill=tk.X, expand=True)
+            self.card_details.configure(text=" Cấu hình: 2. Phụ đề Web (YouTube/Facebook) ")
+        elif opt == "ai":
+            self.frame_opt_ai.pack(fill=tk.X, expand=True)
+            self.card_details.configure(text=" Cấu hình: 3. Dịch bằng A.I (OpenAI standard) ")
+
+    def _toggle_show_ai_api_key(self) -> None:
+        """Toggle masking of AI API Key."""
+        if not hasattr(self, "entry_ai_key"):
+            return
+        if self.entry_ai_key.cget("show") == "":
+            self.entry_ai_key.configure(show="*")
+            self.btn_show_ai_key.configure(text="👁")
+        else:
+            self.entry_ai_key.configure(show="")
+            self.btn_show_ai_key.configure(text="🔒")
 
     def _browse_subtitle_file(self) -> None:
         filetypes = [
@@ -3807,7 +4141,17 @@ class SettingsDialog:
                 sub_thick = 2
 
             sub_dict = {
+                "enabled": bool(self.sub_enabled_var.get()),
+                "source_option": self.sub_source_option_var.get().strip() or "web",
                 "file": self.sub_file_var.get().strip(),
+                "youtube_prefer_original": bool(self.sub_yt_prefer_orig_var.get()),
+                "youtube_auto_translate": bool(self.sub_yt_auto_trans_var.get()),
+                "facebook_prefer_original": bool(self.sub_fb_prefer_orig_var.get()),
+                "facebook_allow_auto": bool(self.sub_fb_allow_auto_var.get()),
+                "target_lang": self.sub_target_lang_var.get().strip() or "vi",
+                "ai_endpoint": self.sub_ai_endpoint_var.get().strip() or "https://api.openai.com/v1",
+                "ai_api_key": self.sub_ai_api_key_var.get().strip(),
+                "ai_model": self.sub_ai_model_var.get().strip() or "gpt-4o-mini",
                 "font_family": self.sub_font_var.get().strip() or "Segoe UI",
                 "font_size": sub_size,
                 "text_color": self.sub_text_color_var.get().strip() or "#ffffff",

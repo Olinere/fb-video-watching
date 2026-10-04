@@ -141,6 +141,8 @@ class ResolvedVideo:
     content_id: Optional[str] = None
     source_name: Optional[str] = None
     canonical_url: Optional[str] = None
+    subtitles: Optional[Dict[str, Any]] = None
+    automatic_captions: Optional[Dict[str, Any]] = None
 
 
 # --- Custom Domain Exceptions ---

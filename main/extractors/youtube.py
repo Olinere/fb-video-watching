@@ -426,6 +426,9 @@ class YouTubeExtractor(BaseExtractor):
         if selected_v_fmt and selected_v_fmt.get("http_headers"):
             http_headers.update(selected_v_fmt["http_headers"])
 
+        subtitles_data = info.get("subtitles")
+        auto_captions_data = info.get("automatic_captions")
+
         # Giải phóng dữ liệu thô của yt-dlp (25-45MB) ngay sau khi đã trích xuất đủ thông tin.
         # Không ảnh hưởng đến formats_list (đã sao chép sang object Format tinh gọn).
         try:
@@ -449,6 +452,8 @@ class YouTubeExtractor(BaseExtractor):
             content_id=content_id,
             source_name="youtube",
             canonical_url=canonical_url,
+            subtitles=subtitles_data,
+            automatic_captions=auto_captions_data,
         )
 
 

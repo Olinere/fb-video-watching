@@ -223,7 +223,20 @@ DEFAULT_SETTINGS = {
         "show_toast": True,          # Show Windows Toast notification when finished
     },
     "subtitle": {
-        "file": "",                  # Path to loaded subtitle file
+        "enabled": True,             # Master switch for subtitles
+        "source_option": "web",      # "local" | "web" | "ai" | "none" (chỉ chọn 1 trong 3)
+        "file": "",                  # Path to loaded local subtitle file
+        # Option 2: Web Platform Captions (YouTube & Facebook)
+        "youtube_prefer_original": True,
+        "youtube_auto_translate": True,
+        "facebook_prefer_original": True,
+        "facebook_allow_auto": True,
+        "target_lang": "vi",         # Preferred subtitle language
+        # Option 3: Pluggable AI Translator (OpenAI completion standard)
+        "ai_endpoint": "https://api.openai.com/v1",
+        "ai_api_key": "",
+        "ai_model": "gpt-4o-mini",
+        # Styling (Shared across all options)
         "font_family": "Segoe UI",   # Font family
         "font_size": 36,             # Default font size
         "text_color": "#ffffff",     # Primary text color
