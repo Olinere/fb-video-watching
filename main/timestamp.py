@@ -11,9 +11,24 @@ _HUMAN_TIMESTAMP_PATTERN = re.compile(
     r"^(?=.*[hmsHMS])\s*(?:(\d+)\s*[hH])?\s*(?:(\d+)\s*[mM])?\s*(?:(\d+)\s*[sS])?\s*$"
 )
 
-# Regex for digital clock formats: e.g. "90", "1:30", "01:01:30"
+SUPPORTED_FORMATS_HELP = (
+    "Các định dạng thời gian được chấp nhận:\n"
+    "  • Dạng đồng hồ: 1:30 (1 phút 30 giây), 01:15:30 (1 giờ 15 phút 30 giây)\n"
+    "  • Dùng khoảng trắng: 1 30, 2 00 50 (hoặc bấm Space tự đổi thành :)\n"
+    "  • Dạng đơn vị: 1h30m, 1h 30m 45s, 30s, 5m, 2h\n"
+    "  • Giây thuần: 90 (90 giây = 1:30)"
+)
+
+
+def get_supported_formats_help() -> str:
+    """Trả về chuỗi hướng dẫn các định dạng timestamp được chấp nhận."""
+    return SUPPORTED_FORMATS_HELP
+
+
+# Regex for digital clock formats: e.g. "90", "1:30", "01:01:30", "1 30", "2 00 50"
+# Accepts ':' or whitespace between numeric parts, but strictly rejects malformed repeated colons like "1::30"
 _CLOCK_TIMESTAMP_PATTERN = re.compile(
-    r"^(?:(?:(\d+):)?(\d+):)?(\d+)$"
+    r"^(?:(?:(\d+)(?:\s*:\s*|\s+))?(\d+)(?:\s*:\s*|\s+))?(\d+)$"
 )
 
 
@@ -78,7 +93,7 @@ def parse_timestamp(text: str) -> int:
         total_seconds = hours * 3600 + minutes * 60 + seconds
         return total_seconds * 1000
 
-    raise ValueError(f"Invalid timestamp format: '{text}'")
+    raise ValueError(f"Không đúng định dạng thời gian: '{text}'.\n\n{SUPPORTED_FORMATS_HELP}")
 
 
 def format_timestamp(time_ms: int) -> str:

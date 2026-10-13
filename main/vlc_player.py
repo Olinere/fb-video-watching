@@ -149,10 +149,12 @@ class VLCPlayer:
             # This prevents the "reusing provided vout" + GPU ring-buffer stall that
             # causes video freeze after ~3 minutes in a queue transition.
             if _prev_url and _prev_url != stream_url:
-                try:
-                    self.player.stop()
-                except Exception:
-                    pass
+                vlc = self._vlc_module
+                if self.player.get_state() not in (vlc.State.Stopped, vlc.State.Ended):
+                    try:
+                        self.player.stop()
+                    except Exception:
+                        pass
                 if self._current_media:
                     try:
                         self._current_media.release()
@@ -207,10 +209,12 @@ class VLCPlayer:
         swapchain first before we bind a new media surface.
         """
         # Stop existing playback before swapping media to cleanly reset decoders
-        try:
-            self.player.stop()
-        except Exception:
-            pass
+        vlc = self._vlc_module
+        if self.player.get_state() not in (vlc.State.Stopped, vlc.State.Ended):
+            try:
+                self.player.stop()
+            except Exception:
+                pass
 
         if self._current_media:
             try:
@@ -322,14 +326,17 @@ class VLCPlayer:
     def reinit_instance(self, vlc_args: List[str]) -> None:
         """
         Reinitialize VLC instance with new arguments (e.g. updated subtitle styling or network caching).
-        If video is actively playing, resumes playback from current position with the new configuration.
+        If video is actively playing or paused, resumes playback from current position with the new configuration.
         """
-        was_playing = self.is_playing()
-        cur_time = self.get_position() if was_playing else 0
+        was_active = self.state in ("playing", "paused")
+        was_paused = (self.state == "paused")
+        cur_time = self.get_position() if was_active else 0
         cur_url = self._current_url
         cur_audio = self._current_audio_url
         cur_sub = self._current_subtitle_file
         cur_headers = self._current_http_headers
+        saved_vol = self.get_volume()
+        saved_muted = self.is_muted()
 
         self.stop()
         try:
@@ -355,10 +362,48 @@ class VLCPlayer:
         except Exception:
             pass
 
-        if was_playing and cur_url:
+        # Restore audio volume and mute state
+        self.set_volume(saved_vol)
+        if saved_muted:
+            self.set_mute(True)
+
+        if was_active and cur_url:
             self.play(cur_url, audio_url=cur_audio, subtitle_file=cur_sub, http_headers=cur_headers)
             if cur_time > 0:
-                self.parent_frame.after(600, lambda: self.seek_to(cur_time))
+                self._perform_reinit_resume_seek(cur_time, was_paused=was_paused)
+
+    def _perform_reinit_resume_seek(
+        self,
+        target_ms: int,
+        was_paused: bool = False,
+        max_attempts: int = 50,
+    ) -> None:
+        """
+        Poll until VLC is actively playing/ready before seeking to target_ms.
+        If playback was previously paused, pauses playback once seek is completed.
+        """
+        if not self.player or not self.parent_frame:
+            return
+
+        vlc = self._vlc_module
+        try:
+            raw_state = self.player.get_state()
+        except Exception:
+            raw_state = None
+
+        dur = self.get_duration()
+        cur_pos = self.get_position()
+
+        # Seek once media is loaded and ready, or fallback when attempts exhausted
+        if (raw_state == vlc.State.Playing and (dur > 0 or cur_pos >= 0)) or max_attempts <= 0:
+            self.seek_to(target_ms)
+            if was_paused:
+                self.parent_frame.after(100, self.pause)
+        else:
+            self.parent_frame.after(
+                100,
+                lambda: self._perform_reinit_resume_seek(target_ms, was_paused=was_paused, max_attempts=max_attempts - 1),
+            )
 
     def pause(self) -> None:
         """Pause playback."""
@@ -511,7 +556,7 @@ class VLCPlayer:
     def get_volume(self) -> int:
         """Returns current audio volume (0-150)."""
         vol = self.player.audio_get_volume()
-        return vol if vol >= 0 else self._last_volume
+        return vol if isinstance(vol, int) and vol >= 0 else self._last_volume
 
     def toggle_mute(self) -> bool:
         """Toggle audio mute state. Returns True if now muted."""
@@ -592,6 +637,22 @@ class VLCPlayer:
         elif vlc_state in (vlc.State.Stopped, vlc.State.Ended, vlc.State.NothingSpecial):
             return "stopped"
         return "stopped"
+
+    @property
+    def is_opening(self) -> bool:
+        """Returns True if libVLC is currently in State.Opening (downloading metadata/moov atom)."""
+        try:
+            return self.player.get_state() == self._vlc_module.State.Opening
+        except Exception:
+            return False
+
+    @property
+    def raw_vlc_state(self):
+        """Returns raw libVLC State enum."""
+        try:
+            return self.player.get_state()
+        except Exception:
+            return None
 
     # --- Memory Leak Prevention & Lifecycle ---
 

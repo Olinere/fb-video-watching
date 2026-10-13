@@ -13,6 +13,8 @@ from main.gui.components import (
     OSDOverlay,
     PiPProgressOverlay,
     ListboxTooltip,
+    WidgetTooltip,
+    SkeletonOverlay,
 )
 from main.gui.menu_bar import ThemedMenuBar
 from main.gui.settings_dialog import SettingsDialog
@@ -26,6 +28,8 @@ __all__ = [
     "OSDOverlay",
     "PiPProgressOverlay",
     "ListboxTooltip",
+    "WidgetTooltip",
+    "SkeletonOverlay",
     "ThemeManager",
     "messagebox",
     "filedialog",

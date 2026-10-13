@@ -47,17 +47,16 @@ ProgressCallback = Callable[[int, int], None]
 
 def is_vlc_available() -> bool:
     """
-    Return True if libvlc can be successfully loaded and instantiated.
-    This is the only reliable cross-platform check (registry keys can be stale).
+    Return True if libvlc can be successfully loaded and queried.
+    Uses libvlc_get_version() to verify dynamic library linkage without
+    incurring the expensive overhead of initializing and tearing down
+    a full libvlc C-Instance twice on startup.
     """
     try:
         import vlc  # type: ignore
 
-        inst = vlc.Instance("--quiet")
-        if inst:
-            inst.release()
-            return True
-        return False
+        ver = vlc.libvlc_get_version()
+        return bool(ver)
     except Exception:
         return False
 

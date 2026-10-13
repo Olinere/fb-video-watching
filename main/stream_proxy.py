@@ -17,6 +17,8 @@ from typing import Optional, Dict
 import urllib.parse
 import urllib.request
 
+from main.thread_pool import DaemonThreadPoolExecutor
+
 logger = logging.getLogger("FBVideoWatcher.StreamProxy")
 
 # Create SSL context that allows unverified certs if CDNs use self-signed / expired certs
@@ -258,6 +260,7 @@ class StreamProxyHandler(http.server.BaseHTTPRequestHandler):
             headers["Referer"] = referer
 
         # Probe remote Content-Length and Range capability
+        supports_ranges = True
         try:
             probe_req = urllib.request.Request(target_url, headers={**headers, "Range": "bytes=0-1"})
             with urllib.request.urlopen(probe_req, context=_SSL_CTX, timeout=10) as r_probe:
@@ -266,6 +269,8 @@ class StreamProxyHandler(http.server.BaseHTTPRequestHandler):
                     total_len = int(cr.split("/")[-1])
                 else:
                     total_len = int(r_probe.headers.get("Content-Length", 0))
+                    if r_probe.status != 206 and r_probe.headers.get("Accept-Ranges", "").lower() != "bytes":
+                        supports_ranges = False
                 content_type = r_probe.headers.get("Content-Type", "video/mp4")
         except Exception as e:
             try:
@@ -287,12 +292,15 @@ class StreamProxyHandler(http.server.BaseHTTPRequestHandler):
             is_partial = True
 
         try:
-            self.send_response(206 if is_partial else 200)
+            self.send_response(206 if (is_partial and supports_ranges) else 200)
             self.send_header("Content-Type", content_type)
-            self.send_header("Accept-Ranges", "bytes")
-            if is_partial and total_len > 0:
-                self.send_header("Content-Range", f"bytes {req_start}-{req_end}/{total_len}")
-            self.send_header("Content-Length", str(req_end - req_start + 1))
+            if supports_ranges:
+                self.send_header("Accept-Ranges", "bytes")
+                if is_partial and total_len > 0:
+                    self.send_header("Content-Range", f"bytes {req_start}-{req_end}/{total_len}")
+                self.send_header("Content-Length", str(req_end - req_start + 1))
+            elif total_len > 0:
+                self.send_header("Content-Length", str(total_len))
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
         except Exception:
@@ -301,25 +309,41 @@ class StreamProxyHandler(http.server.BaseHTTPRequestHandler):
         if head_only:
             return
 
+        # If upstream does not support Range requests, stream sequentially without prefetch
+        if not supports_ranges:
+            try:
+                seq_req = urllib.request.Request(target_url, headers=headers)
+                with urllib.request.urlopen(seq_req, context=_SSL_CTX, timeout=15) as r_seq:
+                    while True:
+                        block = r_seq.read(64 * 1024)
+                        if not block:
+                            break
+                        self.wfile.write(block)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass
+            except Exception as exc:
+                logger.debug("Error in sequential MP4 stream proxy: %s", exc)
+            return
+
         CHUNK_SIZE = 1 * 1024 * 1024  # 1 MB chunk
-        MAX_PREFETCH = 4  # Maximum 4 MB in flight in memory
+        MAX_PREFETCH = 6  # Maximum 6 MB in flight in memory
+        MAX_WORKERS = 6   # 6 parallel connections accelerate metadata & moov atom retrieval
 
         def fetch_chunk(start_b: int, end_b: int) -> bytes:
             req_c = urllib.request.Request(target_url, headers={**headers, "Range": f"bytes={start_b}-{end_b}"})
-            with urllib.request.urlopen(req_c, context=_SSL_CTX, timeout=12) as res:
+            with urllib.request.urlopen(req_c, context=_SSL_CTX, timeout=15) as res:
                 return res.read()
 
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+        executor = DaemonThreadPoolExecutor(max_workers=MAX_WORKERS, thread_name_prefix="StreamProxyWorker")
         curr_offset = req_start
+        sched_offset = req_start
         active_futures = {}
 
         try:
             while curr_offset <= req_end:
-                sched_offset = curr_offset
                 while len(active_futures) < MAX_PREFETCH and sched_offset <= req_end:
-                    if sched_offset not in active_futures:
-                        c_end = min(req_end, sched_offset + CHUNK_SIZE - 1)
-                        active_futures[sched_offset] = executor.submit(fetch_chunk, sched_offset, c_end)
+                    c_end = min(req_end, sched_offset + CHUNK_SIZE - 1)
+                    active_futures[sched_offset] = executor.submit(fetch_chunk, sched_offset, c_end)
                     sched_offset += CHUNK_SIZE
 
                 fut = active_futures.pop(curr_offset, None)
@@ -433,6 +457,10 @@ class StreamProxyServer:
         """Forget a client connection after its request handler has finished."""
         with self._connections_lock:
             self._active_connections.discard(connection)
+
+    def close_active_connections(self) -> None:
+        """Public method to immediately interrupt active client connections on shutdown."""
+        self._close_active_connections()
 
     def _close_active_connections(self) -> None:
         """Interrupt handlers that are blocked on a VLC/Telegram stream."""

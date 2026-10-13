@@ -127,6 +127,10 @@ def apply_window_icon(window: Any, icon_path: Any) -> None:
     ico_p = icon_p if icon_p.suffix.lower() == ".ico" else (icon_p.parent / "app_icon.ico")
     png_p = icon_p if icon_p.suffix.lower() == ".png" else (icon_p.parent / "icon-192.png")
 
+    if getattr(window, "_fbvw_window_icon_applied", False):
+        return
+    setattr(window, "_fbvw_window_icon_applied", True)
+
     if sys.platform == "win32":
         try:
             myappid = "fbvideowatcher.desktop.app"

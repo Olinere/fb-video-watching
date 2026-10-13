@@ -155,7 +155,7 @@ class GenericWebExtractor(BaseExtractor):
 
             # Direct media playlists/manifests (e.g. .m3u8, .mpd) or plain media files
             # without web portal wrappers are handled directly by GenericExtractor
-            if path.endswith((".m3u8", ".mpd", ".ts")):
+            if path.endswith((".m3u8", ".mpd", ".ts", ".mp4", ".webm", ".mkv", ".avi", ".mov")):
                 return False
 
             # Bypass Layer 4 for major platforms natively handled by yt-dlp

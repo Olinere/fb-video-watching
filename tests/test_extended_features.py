@@ -44,10 +44,19 @@ class TestExtendedFeatures(unittest.TestCase):
     def setUpClass(cls):
         cls.root = tk.Tk()
         cls.root.withdraw()
+        try:
+            cls.root.tk.eval('proc bgerror {args} {}')
+        except Exception:
+            pass
 
     @classmethod
     def tearDownClass(cls):
         try:
+            for t in cls.root.tk.call("after", "info"):
+                try:
+                    cls.root.after_cancel(t)
+                except Exception:
+                    pass
             cls.root.destroy()
         except Exception:
             pass
@@ -86,11 +95,26 @@ class TestExtendedFeatures(unittest.TestCase):
             on_history_request=self.history_req_mock,
             on_download_request=self.download_req_mock,
         )
+        self.app = None
 
     def tearDown(self):
-        if hasattr(self.gui, "destroy"):
-            self.gui.destroy()
+        if getattr(self, "app", None) is not None:
+            try:
+                self.app.destroy()
+            except Exception:
+                pass
+            self.app = None
+        if hasattr(self, "gui") and hasattr(self.gui, "destroy"):
+            try:
+                self.gui.destroy()
+            except Exception:
+                pass
         try:
+            for t in self.root.tk.call("after", "info"):
+                try:
+                    self.root.after_cancel(t)
+                except Exception:
+                    pass
             self.root.geometry(f"{DEFAULT_WINDOW_WIDTH}x{DEFAULT_WINDOW_HEIGHT}+50+50")
             self.root.update_idletasks()
         except Exception:
@@ -392,7 +416,7 @@ class TestExtendedFeatures(unittest.TestCase):
         mock_player.state = "stopped"
 
         with patch("main.app.VLCPlayer", return_value=mock_player):
-            app = Application(
+            self.app = app = Application(
                 self.root,
                 settings_mgr=self.settings_mgr,
                 history_mgr=self.history_mgr,
@@ -464,7 +488,7 @@ class TestExtendedFeatures(unittest.TestCase):
         mock_player.state = "stopped"
 
         with patch("main.app.VLCPlayer", return_value=mock_player):
-            app = Application(
+            self.app = app = Application(
                 self.root,
                 settings_mgr=self.settings_mgr,
                 history_mgr=self.history_mgr,
@@ -488,7 +512,7 @@ class TestExtendedFeatures(unittest.TestCase):
         mock_player.state = "stopped"
 
         with patch("main.app.VLCPlayer", return_value=mock_player):
-            app = Application(
+            self.app = app = Application(
                 self.root,
                 settings_mgr=self.settings_mgr,
                 history_mgr=self.history_mgr,
@@ -539,7 +563,7 @@ class TestExtendedFeatures(unittest.TestCase):
         mock_player.state = "stopped"
 
         with patch("main.app.VLCPlayer", return_value=mock_player):
-            app = Application(
+            self.app = app = Application(
                 self.root,
                 settings_mgr=self.settings_mgr,
                 history_mgr=self.history_mgr,

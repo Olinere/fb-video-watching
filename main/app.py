@@ -15,6 +15,8 @@ import tkinter as tk
 from tkinter import messagebox, filedialog
 from typing import Optional, Callable, Dict, Any, Tuple
 
+from main.thread_pool import DaemonThreadPoolExecutor
+
 from main.constants import (
     UI_UPDATE_INTERVAL_MS,
     UI_IDLE_INTERVAL_MS,
@@ -90,13 +92,15 @@ class Application:
         self._last_health_suggestion_time = 0.0
         self._last_health_suggestion_url = ""
 
-        # Auto-register fbvw:// protocol if enabled in settings
+        # Auto-register fbvw:// protocol in background thread if enabled in settings
         if sys.platform == "win32" and self.settings.get("ui", "register_fbvw_protocol", default=True):
-            try:
-                from main.platform_utils import ensure_fbvw_protocol_registered
-                ensure_fbvw_protocol_registered()
-            except Exception as ex:
-                logger.debug(f"Không thể tự động đăng ký protocol fbvw: {ex}")
+            def _bg_register_protocol():
+                try:
+                    from main.platform_utils import ensure_fbvw_protocol_registered
+                    ensure_fbvw_protocol_registered()
+                except Exception as ex:
+                    logger.debug(f"Không thể tự động đăng ký protocol fbvw: {ex}")
+            threading.Thread(target=_bg_register_protocol, daemon=True, name="FBVW-ProtoRegister").start()
 
         # 2. Network Manager (Proxy & In-App DoH DNS)
         from main.network import NetworkManager
@@ -119,9 +123,9 @@ class Application:
         logger.info(f"Tham số VLC: {' '.join(self.vlc_args)}")
         self._apply_cpu_optimizations()
 
-        # 3. Dedicated Background Worker Thread Pool (§9.2 D)
+        # 3. Dedicated Background Worker Thread Pool (§9.2 D, Daemonized to prevent exit hangs)
         pool_size = self.tuner.recommend_thread_pool_size()
-        self.executor = concurrent.futures.ThreadPoolExecutor(
+        self.executor = DaemonThreadPoolExecutor(
             max_workers=pool_size,
             thread_name_prefix="fbw-worker",
         )
@@ -134,6 +138,19 @@ class Application:
         self._active_future: Optional[concurrent.futures.Future] = None
         self._consecutive_healthy_play_ticks = 0
 
+        # Periodic timer identifiers
+        self._ui_timer_id = None
+        self._maint_timer_id = None
+        self._clip_timer_id = None
+        self._seek_cleanup_timer_id = None
+        self._is_shutting_down = False
+
+        # Install safe Tcl bgerror suppression to eliminate benign teardown spam
+        try:
+            self.root.tk.eval('proc bgerror {args} {}')
+        except Exception:
+            pass
+
         # Autosave throttling
         self._last_saved_position_ms = 0
         self._last_saved_time = 0.0
@@ -143,6 +160,10 @@ class Application:
         self._ab_point_a: Optional[int] = None
         self._ab_point_b: Optional[int] = None
         self._resolved_duration_ms: int = 0
+        self._last_known_playback_pos_ms: int = 0
+        self._last_known_duration_ms: int = 0
+        self._session_resume_pos_ms: Optional[int] = None
+        self._network_retry_timer_id = None
 
         # 5. Initialize GUI Window
         self.gui = MainWindow(
@@ -257,31 +278,48 @@ class Application:
         # 14. Dọn sạch tàn dư file cũ từ lần cập nhật trước (background thread - không ảnh hưởng startup)
         threading.Thread(target=self._cleanup_on_startup, daemon=True).start()
 
-        self._ui_timer_id = None
-        self._maint_timer_id = None
-        self._clip_timer_id = None
-        self._seek_cleanup_timer_id = None
-
         def _on_root_destroyed(event=None):
             if event is not None and getattr(event, "widget", None) != self.root:
                 return
-            self._is_shutting_down = True
-            for tid_name in ("_ui_timer_id", "_maint_timer_id", "_clip_timer_id", "_seek_cleanup_timer_id"):
-                tid = getattr(self, tid_name, None)
-                if tid is not None:
-                    try:
-                        self.root.after_cancel(tid)
-                    except Exception:
-                        pass
-                    setattr(self, tid_name, None)
-            if hasattr(self.gui, "destroy"):
-                try:
-                    self.gui.destroy()
-                except Exception:
-                    pass
+            self.destroy()
 
         try:
             self.root.bind("<Destroy>", _on_root_destroyed, add="+")
+        except Exception:
+            pass
+
+    def destroy(self) -> None:
+        """Cleanly cancel all pending timers, release executor and application resources."""
+        self._is_shutting_down = True
+        for tid_name in ("_ui_timer_id", "_maint_timer_id", "_clip_timer_id", "_seek_cleanup_timer_id", "_network_retry_timer_id"):
+            tid = getattr(self, tid_name, None)
+            if tid is not None:
+                try:
+                    self.root.after_cancel(tid)
+                except Exception:
+                    pass
+                setattr(self, tid_name, None)
+        try:
+            for timer_id in self.root.tk.call("after", "info"):
+                try:
+                    self.root.after_cancel(timer_id)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        if hasattr(self, "gui") and hasattr(self.gui, "destroy"):
+            try:
+                self.gui.destroy()
+            except Exception:
+                pass
+        try:
+            self.executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
+
+    def __del__(self) -> None:
+        try:
+            self.destroy()
         except Exception:
             pass
 
@@ -312,14 +350,31 @@ class Application:
             duration_ms = int(raw_dur) if isinstance(raw_dur, (int, float)) else 0
             if duration_ms <= 0 and getattr(self, "_resolved_duration_ms", 0) > 0:
                 duration_ms = self._resolved_duration_ms
-            try:
-                self.gui.update_playback_time(current_ms, duration_ms)
-                if hasattr(self.gui, "update_chapter_position"):
-                    self.gui.update_chapter_position(current_ms)
-            except Exception:
-                pass
 
             state = self.player.state
+
+            # Continuously track latest valid playback position and duration
+            if current_ms > 0:
+                self._last_known_playback_pos_ms = current_ms
+            if duration_ms > 0:
+                self._last_known_duration_ms = duration_ms
+
+            # Timeline UI Freeze on Disconnect (§Trụ cột 2):
+            # Nếu player đang stopped hoặc error do mất mạng/ngắt stream nhưng trước đó đã có mốc phát:
+            # Tiếp tục giữ nguyên mốc hiển thị gần nhất, tuyệt đối KHÔNG ép timeline giật về 0:00:00!
+            if state in ("error", "stopped") and self._last_known_playback_pos_ms > 0:
+                display_pos = self._last_known_playback_pos_ms
+                display_dur = max(duration_ms, self._last_known_duration_ms, getattr(self, "_resolved_duration_ms", 0))
+            else:
+                display_pos = current_ms
+                display_dur = duration_ms if duration_ms > 0 else max(self._last_known_duration_ms, getattr(self, "_resolved_duration_ms", 0))
+
+            try:
+                self.gui.update_playback_time(display_pos, display_dur)
+                if hasattr(self.gui, "update_chapter_position"):
+                    self.gui.update_chapter_position(display_pos)
+            except Exception:
+                pass
             stats = self.player.get_media_stats() if self.player else None
             raw_displayed = getattr(stats, "displayed_pictures", None) if stats else None
             raw_lost = getattr(stats, "lost_pictures", None) if stats else None
@@ -341,6 +396,28 @@ class Application:
                 self.gui.set_play_pause_button_state(state == "playing")
             except Exception:
                 pass
+
+            # Manage Skeleton Loading state & State.Opening transitions
+            is_opening = getattr(self.player, "is_opening", False)
+            if is_opening or (state == "buffering" and current_ms == 0 and not (displayed and displayed > 0)):
+                # Keep skeleton loading and loading OSD active during opening/buffering
+                if hasattr(self.gui, "skeleton_overlay") and not getattr(self.gui.skeleton_overlay, "is_active", False):
+                    self.gui.show_skeleton_loading("Đang tải siêu dữ liệu video...", "Đang kéo atom moov & giải mã khung hình")
+                if hasattr(self.gui, "osd_overlay") and not getattr(self.gui.osd_overlay, "_is_loading", False):
+                    self.gui.osd_overlay.show_loading("⏳ Đang tải siêu dữ liệu video...")
+            elif state in ("playing", "paused"):
+                # Playback has started or paused -> smoothly reveal video and clear loading indicators
+                if hasattr(self.gui, "hide_skeleton_loading"):
+                    self.gui.hide_skeleton_loading()
+                if hasattr(self.gui, "hide_overlay"):
+                    self.gui.hide_overlay()
+                if hasattr(self.gui, "osd_overlay") and getattr(self.gui.osd_overlay, "_is_loading", False):
+                    self.gui.osd_overlay.hide()
+            elif state in ("error", "stopped"):
+                if hasattr(self.gui, "hide_skeleton_loading"):
+                    self.gui.hide_skeleton_loading()
+                if hasattr(self.gui, "osd_overlay") and getattr(self.gui.osd_overlay, "_is_loading", False):
+                    self.gui.osd_overlay.hide()
 
             if state == "playing":
                 self._consecutive_healthy_play_ticks += 1
@@ -452,6 +529,28 @@ class Application:
 
     # --- Playback & Action Handlers ---
 
+    def _get_effective_playback_position(self) -> int:
+        """Return the highest reliable playback position in milliseconds.
+
+        Safely bridges raw VLC player position with in-memory tracked position,
+        handling mock objects in tests and VLC returning 0/-1 when stopped or errored.
+        """
+        raw = self.player.get_position() if self.player else 0
+        current_pos = int(raw) if isinstance(raw, (int, float)) else 0
+        last_pos = getattr(self, "_last_known_playback_pos_ms", 0)
+        last_pos_int = int(last_pos) if isinstance(last_pos, (int, float)) else 0
+        return max(current_pos, last_pos_int)
+
+    def _get_effective_playback_duration(self) -> int:
+        """Return the most reliable playback duration in milliseconds."""
+        raw = self.player.get_duration() if self.player else 0
+        raw_dur = int(raw) if isinstance(raw, (int, float)) else 0
+        last_dur = getattr(self, "_last_known_duration_ms", 0)
+        last_dur_int = int(last_dur) if isinstance(last_dur, (int, float)) else 0
+        resolved_dur = getattr(self, "_resolved_duration_ms", 0)
+        resolved_dur_int = int(resolved_dur) if isinstance(resolved_dur, (int, float)) else 0
+        return max(raw_dur, last_dur_int, resolved_dur_int)
+
     def handle_play_request(self, url: str) -> None:
         """Handle URL play request from user (resolves via background thread)."""
         if not self.player:
@@ -515,6 +614,27 @@ class Application:
         if self._original_url and self.persistence_policy.allow_resume_write():
             self._save_current_position()
 
+        # In-Session Recovery Snapshot (§Trụ cột 1):
+        # Nếu đang phát lại cùng 1 URL (reconnect khi rớt mạng, hoặc người dùng bấm phát lại cùng link):
+        # Chụp lại mốc thời gian đang xem dở vào _session_resume_pos_ms và bảo toàn mốc RAM.
+        is_same_url = (self._original_url == url)
+        effective_pos = self._get_effective_playback_position()
+        if is_same_url:
+            if effective_pos > 3000 and self._session_resume_pos_ms is None:
+                self._session_resume_pos_ms = effective_pos
+        else:
+            self._session_resume_pos_ms = None
+            self._last_known_playback_pos_ms = 0
+            self._last_known_duration_ms = 0
+
+        # Cancel any pending network retry timer
+        if getattr(self, "_network_retry_timer_id", None) is not None:
+            try:
+                self.root.after_cancel(self._network_retry_timer_id)
+            except Exception:
+                pass
+            self._network_retry_timer_id = None
+
         self._original_url = url
         self._re_resolve_attempts = 0
         self._consecutive_healthy_play_ticks = 0
@@ -543,18 +663,52 @@ class Application:
         cookie_file = self.settings.get("advanced", "cookie_file", default="")
         profile = resolve_profile(self.settings.settings, url)
         max_height = profile.max_height
+        sub_cfg = self.settings.get("subtitle", default={})
 
-        # Submit resolution task to background thread pool
+        # Submit resolution task to background thread pool (including background subtitle resolution)
         future = self.executor.submit(
-            resolve_facebook_url,
+            self._resolve_stream_and_subtitles,
             url=url,
             cookie_file=cookie_file if cookie_file else None,
             max_height=max_height,
+            sub_cfg=sub_cfg,
         )
         self._active_future = future
         future.add_done_callback(
             lambda f: self.root.after(0, lambda: self._on_resolve_completed(f, url))
         )
+
+    @staticmethod
+    def _resolve_stream_and_subtitles(
+        url: str,
+        cookie_file: Optional[str],
+        max_height: Optional[int],
+        sub_cfg: Optional[dict] = None,
+    ) -> Tuple[Any, Optional[str]]:
+        """Worker task: resolve media stream and prepare subtitles completely off the UI thread."""
+        resolved = resolve_facebook_url(
+            url=url,
+            cookie_file=cookie_file,
+            max_height=max_height,
+        )
+        active_sub_file = None
+        if isinstance(sub_cfg, dict) and sub_cfg.get("enabled", True):
+            try:
+                from main.subtitle import SubtitleDispatcher
+                media_info = {
+                    "id": resolved.content_id or "stream",
+                    "subtitles": resolved.subtitles or {},
+                    "automatic_captions": resolved.automatic_captions or {},
+                }
+                active_sub_file = SubtitleDispatcher.resolve_subtitle_for_stream(
+                    video_url=url,
+                    info_dict=media_info,
+                    sub_settings=sub_cfg,
+                    video_id=resolved.content_id,
+                )
+            except Exception as exc:
+                logger.warning("Lỗi phân giải phụ đề ngầm: %s", exc)
+        return resolved, active_sub_file
 
     def _on_collection_completed(self, future: concurrent.futures.Future, source_url: str) -> None:
         """Add bounded collection metadata and lazily resolve only its first item."""
@@ -862,6 +1016,9 @@ class Application:
             logger.warning("Đồng bộ nhanh không hiệu quả do luồng video mất kết nối CDN. Đang kết nối lại...")
             self._consecutive_resyncs = 0
             if self._original_url:
+                effective_pos = self._get_effective_playback_position()
+                if effective_pos > 3000:
+                    self._session_resume_pos_ms = effective_pos
                 self.root.after(100, lambda: self.handle_play_request(self._original_url))
 
     def handle_switch_to_auto_profile(self) -> None:
@@ -898,7 +1055,12 @@ class Application:
             return
 
         try:
-            resolved = future.result()
+            raw_res = future.result()
+            if isinstance(raw_res, tuple) and len(raw_res) == 2:
+                resolved, active_sub_file = raw_res
+            else:
+                resolved = raw_res
+                active_sub_file = None
         except concurrent.futures.CancelledError:
             return
         except AuthRequiredError as err:
@@ -952,10 +1114,12 @@ class Application:
                 chapters=getattr(resolved, "chapters", None),
                 canonical_url=getattr(resolved, "canonical_url", None),
             )
-            if hasattr(self.gui, "refresh_queue"):
-                self.gui.refresh_queue(self.queue.snapshot())
-        self.gui.hide_overlay()
-        self.gui.set_status(f"Đang phát: {resolved.title}")
+        # Transition to State.Opening loading: keep skeleton overlay & OSD badge active
+        if hasattr(self.gui, "show_skeleton_loading"):
+            self.gui.show_skeleton_loading("Đang tải siêu dữ liệu video...", f"Đang nạp: {resolved.title}")
+        if hasattr(self.gui, "osd_overlay"):
+            self.gui.osd_overlay.show_loading("⏳ Đang tải siêu dữ liệu video...")
+        self.gui.set_status(f"Đang nạp luồng phát: {resolved.title}")
 
         # Auto-detect vertical video (9:16) for Reels, TikTok, Shorts only if auto-detection is enabled
         auto_pip = self.settings.get("ui", "pip_auto_aspect_ratio", default=False)
@@ -994,35 +1158,30 @@ class Application:
         # Telegram stream can otherwise leave a proxy request handler blocked.
         # Proxy shutdown is asynchronous because server_close() may otherwise
         # block the Tkinter main thread while an old request is being unwound.
+        # Stop the old VLC client before switching sources if playing local proxy stream.
         if not resolved.stream_url.startswith("http://127.0.0.1:"):
             try:
-                from main.stream_proxy import StreamProxyServer
                 old_url = self.player.current_url if self.player else None
                 if isinstance(old_url, str) and old_url.startswith("http://127.0.0.1:"):
                     self.player.stop(clear_source=True)
-                StreamProxyServer.get_instance().stop_async()
             except Exception:
                 pass
 
         # Prepare subtitle according to 3 mutually exclusive options (Local / Web / AI / None)
-        active_sub_file = None
-        sub_cfg = self.settings.get("subtitle", default={})
-        if isinstance(sub_cfg, dict) and sub_cfg.get("enabled", True):
-            try:
-                from main.subtitle import SubtitleDispatcher
-                media_info = {
-                    "id": resolved.content_id or "stream",
-                    "subtitles": resolved.subtitles or {},
-                    "automatic_captions": resolved.automatic_captions or {},
-                }
-                active_sub_file = SubtitleDispatcher.resolve_subtitle_for_stream(
-                    video_url=original_url,
-                    info_dict=media_info,
-                    sub_settings=sub_cfg,
-                    video_id=resolved.content_id,
-                )
-            except Exception as e:
-                logger.warning(f"Error resolving subtitle: {e}")
+        # Note: Web & AI subtitles are already pre-resolved asynchronously in the background worker.
+        if active_sub_file is None:
+            sub_cfg = self.settings.get("subtitle", default={})
+            if isinstance(sub_cfg, dict) and sub_cfg.get("enabled", True) and sub_cfg.get("source_option") == "local":
+                try:
+                    from main.subtitle import SubtitleDispatcher
+                    active_sub_file = SubtitleDispatcher.resolve_subtitle_for_stream(
+                        video_url=original_url,
+                        info_dict=None,
+                        sub_settings=sub_cfg,
+                        video_id=resolved.content_id,
+                    )
+                except Exception as e:
+                    logger.warning(f"Error resolving local subtitle: {e}")
 
         # Start playback via VLC
         profile = resolve_profile(self.settings.settings, original_url)
@@ -1039,8 +1198,12 @@ class Application:
         self.player.set_playback_rate(def_speed)
         self.gui.speed_var.set(f"{def_speed}x")
 
-        # Check for saved history position to resume
-        if (
+        # Check for in-session network recovery position or saved history position to resume (§Trụ cột 1 & 4)
+        if self._session_resume_pos_ms and self._session_resume_pos_ms > 3000:
+            target_pos = self._session_resume_pos_ms
+            logger.info("Khôi phục phiên phát sau khi kết nối lại mạng tại: %d ms", target_pos)
+            self.root.after(100, lambda: self._perform_resume_seek(original_url, target_pos))
+        elif (
             self.persistence_policy.allow_resume_write()
             and self.settings.get("playback", "resume_playback", default=True)
         ):
@@ -1051,8 +1214,8 @@ class Application:
         # Kích hoạt dọn rác sau 2 giây (đảm bảo VLC đã buffer xong mới dọn)
         self.root.after(2000, lambda: self.executor.submit(self._post_task_cleanup))
 
-    def _perform_resume_seek(self, url: str, target_ms: int, max_attempts: int = 25) -> None:
-        """Reliably poll and seek to saved position once VLC stream begins playing."""
+    def _perform_resume_seek(self, url: str, target_ms: int, attempt: int = 0, max_attempts: int = 60) -> None:
+        """Reliably poll and seek to saved position once VLC stream begins playing (Tuân thủ Nguyên tắc 2)."""
         if self._is_shutting_down or not self.player or not self._original_url:
             return
 
@@ -1061,16 +1224,19 @@ class Application:
 
         state = self.player.state
         dur = self.player.get_duration()
+        cur_pos = self.player.get_position()
 
-        # Seek once VLC reports playing and duration, or when attempts exhausted
-        if (state == "playing" and dur > 0) or max_attempts <= 0:
+        # Seek once VLC is ready (state playing/paused and has duration or valid position)
+        if (state in ("playing", "paused") and (dur > 0 or cur_pos >= 0)) or attempt >= max_attempts:
             self.player.seek_to(target_ms)
             time_str = format_timestamp(target_ms)
             self.gui.show_osd_message(f"⏱️ Tiếp tục từ {time_str}")
             logger.info(f"Đã tự động tiếp tục phát từ mốc: {time_str} ({target_ms}ms)")
+            self._session_resume_pos_ms = None
             self._schedule_post_seek_cleanup()
-        else:
-            self.root.after(150, lambda: self._perform_resume_seek(url, target_ms, max_attempts - 1))
+            return
+
+        self.root.after(100, lambda: self._perform_resume_seek(url, target_ms, attempt + 1, max_attempts))
 
     def _apply_post_update_resume(self) -> None:
         """Seamlessly resume playback after application update."""
@@ -1239,7 +1405,15 @@ class Application:
 
     def handle_pause_toggle(self) -> None:
         if self.player:
-            was_playing = (self.player.state == "playing")
+            cur_state = self.player.state
+            if cur_state in ("error", "stopped") and self._original_url:
+                # Video đã bị dừng hoặc lỗi do sự cố mạng -> Tái kích hoạt luồng phát và khôi phục mốc đang xem
+                effective_pos = self._get_effective_playback_position()
+                if effective_pos > 3000:
+                    self._session_resume_pos_ms = effective_pos
+                self.handle_play_request(self._original_url)
+                return
+            was_playing = (cur_state == "playing")
             self.player.toggle_play_pause()
             self.gui.show_osd_action("pause" if was_playing else "play")
             self.gui.set_play_pause_button_state(not was_playing)
@@ -1558,14 +1732,18 @@ class Application:
 
         # Rebuild AutoTuner and VLC args for subsequent playbacks
         self.tuner = AutoTuner(self.sys_info, self.settings.settings)
-        self.vlc_args = self.tuner.build_vlc_args()
+        new_vlc_args = self.tuner.build_vlc_args()
 
         # Re-apply CPU performance optimizations (Affinity, EcoQoS, Timer)
         self._apply_cpu_optimizations()
 
-        # Dynamically reinitialize VLC player instance with new args (subtitle styling, font size, etc.)
-        if self.player:
+        # Only dynamically reinitialize VLC player instance if launch args actually changed
+        current_player_args = getattr(self.player, "_vlc_args", []) if self.player else []
+        if self.player and new_vlc_args != current_player_args:
+            self.vlc_args = new_vlc_args
             self.player.reinit_instance(self.vlc_args)
+        else:
+            self.vlc_args = new_vlc_args
 
         # Apply updated subtitle settings to player if active
         sub_cfg = self.settings.get("subtitle", default={})
@@ -1596,50 +1774,86 @@ class Application:
             self.root.after(0, lambda: self._handle_playback_error_safe(message))
 
     def _handle_playback_error_safe(self, message: str) -> None:
-        """Auto re-resolve Facebook/CDN stream URL if token expired mid-playback."""
+        """Auto re-resolve stream URL if network dropped or token expired mid-playback (§Trụ cột 5)."""
         self.health_monitor.record_error()
         if self._is_shutting_down or not self.player or not self._original_url:
             self.gui.show_error(message)
             return
 
-        current_pos = self.player.get_position()
+        effective_pos = self._get_effective_playback_position()
+        if effective_pos > 3000:
+            self._session_resume_pos_ms = effective_pos
 
-        # If played > 5s and within retry limit -> Auto re-resolve
-        if current_pos > 5000 and self._re_resolve_attempts < self._max_re_resolve_attempts:
+        # If played > 3s and within retry limit -> Auto re-resolve with backoff
+        if effective_pos > 3000 and self._re_resolve_attempts < self._max_re_resolve_attempts:
             self._re_resolve_attempts += 1
-            self.gui.set_loading(f"Stream gián đoạn. Đang tự động kết nối lại ({self._re_resolve_attempts}/3)...")
+            status_text = f"Stream gián đoạn. Đang tự động kết nối lại ({self._re_resolve_attempts}/{self._max_re_resolve_attempts})..."
+            self.gui.set_loading(status_text)
+            self.gui.set_status(status_text)
+            self.gui.show_osd_message(f"⚠️ {status_text}")
 
             cookie_file = self.settings.get("advanced", "cookie_file", default="")
-            max_height = self.settings.get("video", "max_height", default=1080)
+            profile = resolve_profile(self.settings.settings, self._original_url)
+            max_height = profile.max_height
+            sub_cfg = self.settings.get("subtitle", default={})
 
             future = self.executor.submit(
-                resolve_facebook_url,
+                self._resolve_stream_and_subtitles,
                 url=self._original_url,
                 cookie_file=cookie_file if cookie_file else None,
                 max_height=max_height,
+                sub_cfg=sub_cfg,
             )
             future.add_done_callback(
-                lambda f: self.root.after(0, lambda: self._on_re_resolve_completed(f, current_pos))
+                lambda f: self.root.after(0, lambda: self._on_re_resolve_completed(f, effective_pos))
             )
         else:
-            self.gui.show_error(message)
+            time_str = format_timestamp(effective_pos) if effective_pos > 0 else "0:00"
+            self.gui.set_status(f"⚠️ Mất kết nối mạng tại mốc {time_str}. Vui lòng bấm Phát để thử lại.")
+            self.gui.show_osd_message(f"⚠️ Mất kết nối mạng ({time_str})")
+            if hasattr(self.gui, "set_play_pause_button_state"):
+                self.gui.set_play_pause_button_state(False)
 
     def _on_re_resolve_completed(self, future: concurrent.futures.Future, resume_pos: int) -> None:
         if self._is_shutting_down:
             return
         try:
-            resolved = future.result()
+            raw_res = future.result()
+            if isinstance(raw_res, tuple) and len(raw_res) == 2:
+                resolved, active_sub_file = raw_res
+            else:
+                resolved = raw_res
+                active_sub_file = None
+
             self._current_stream_url = resolved.stream_url
             self.gui.hide_overlay()
+            profile = resolve_profile(self.settings.settings, self._original_url or "")
             self.player.play(
                 resolved.stream_url,
                 audio_url=resolved.audio_url,
+                subtitle_file=active_sub_file,
                 http_headers=resolved.http_headers,
+                network_caching_ms=profile.network_caching_ms,
             )
-            # Delay 600ms before seek to let VLC media stream initialize
-            self.root.after(600, lambda: self.player.seek_to(resume_pos))
+            # Polling Resume Seek thay vì timer mù 600ms (Tuân thủ Nguyên tắc 2)
+            self.root.after(100, lambda: self._perform_resume_seek(self._original_url or "", resume_pos))
         except Exception as exc:
-            self.gui.show_error(f"Không thể kết nối lại video: {exc}")
+            logger.warning("Thử kết nối lại luồng phát thất bại: %s", exc)
+            if self._re_resolve_attempts < self._max_re_resolve_attempts:
+                delay_sec = min(10.0, 2.0 * (2 ** (self._re_resolve_attempts - 1)))
+                retry_msg = f"Chưa có mạng. Sẽ tự động thử lại sau {int(delay_sec)}s ({self._re_resolve_attempts}/{self._max_re_resolve_attempts})..."
+                self.gui.set_status(retry_msg)
+                self.gui.show_osd_message(f"⏳ {retry_msg}")
+                self._network_retry_timer_id = self.root.after(
+                    int(delay_sec * 1000),
+                    lambda: self._handle_playback_error_safe("Mạng chưa ổn định. Đang kết nối lại...")
+                )
+            else:
+                time_str = format_timestamp(resume_pos) if resume_pos > 0 else "0:00"
+                self.gui.set_status(f"⚠️ Không thể kết nối lại mạng tại mốc {time_str}. Vui lòng bấm Phát để thử lại.")
+                self.gui.show_osd_message(f"⚠️ Mất kết nối mạng tại mốc {time_str}")
+                if hasattr(self.gui, "set_play_pause_button_state"):
+                    self.gui.set_play_pause_button_state(False)
 
     def _on_playback_ended(self) -> None:
         """Invoked when video finishes playing (VLC C-thread -> main thread)."""
@@ -1647,19 +1861,22 @@ class Application:
             self.root.after(0, self._handle_playback_ended_safe)
 
     def _handle_playback_ended_safe(self) -> None:
-        """Detect whether stream completed naturally or terminated prematurely (token expired)."""
+        """Detect whether stream completed naturally or terminated prematurely (token expired or network drop)."""
         if self._is_shutting_down or not self.player or not self._original_url:
             return
 
-        current_pos = self.player.get_position()
-        duration_ms = self.player.get_duration()
+        # Determine effective position and duration accounting for VLC State.Ended resetting get_position to -1/0
+        effective_pos = self._get_effective_playback_position()
+        effective_dur = self._get_effective_playback_duration()
 
         # If video ended prematurely (e.g. duration > 30s and ended > 15s early)
-        if duration_ms > 30000 and current_pos < (duration_ms - 15000):
+        # Edge case protection: only consider premature if we have a valid duration and we know playback halted well before end
+        if effective_dur > 30000 and 0 < effective_pos < (effective_dur - 15000):
             logger.warning(
-                f"Phát hiện stream bị ngắt sớm tại {current_pos // 1000}s / {duration_ms // 1000}s "
-                "(có thể token Facebook/CDN đã hết hạn). Đang tự động kết nối lại..."
+                f"Phát hiện stream bị ngắt sớm tại {effective_pos // 1000}s / {effective_dur // 1000}s "
+                "(có thể token Facebook/CDN đã hết hạn hoặc rớt mạng). Đang tự động kết nối lại..."
             )
+            self._session_resume_pos_ms = effective_pos
             self._handle_playback_error_safe("Stream bị ngắt kết nối giữa chừng.")
             return
 
@@ -1731,21 +1948,41 @@ class Application:
     # --- Shutdown & Position Persistence (§9.2 E) ---
 
     def _save_current_position(self) -> None:
-        """Persist current video playback position into SQLite."""
-        if self.persistence_policy.allow_resume_write() and self.player and self._original_url:
-            pos = self.player.get_position()
-            dur = self.player.get_duration()
-            if pos > 3000:
-                self.history.save_position(
-                    url=self._original_url,
-                    position_ms=pos,
-                    duration_ms=dur,
-                )
+        """Persist current video playback position into SQLite with safe fast timeout (§Trụ cột 3)."""
+        try:
+            if self.persistence_policy.allow_resume_write() and self._original_url:
+                effective_pos = self._get_effective_playback_position()
+                effective_dur = self._get_effective_playback_duration()
+                if effective_pos > 3000:
+                    self.history.save_position(
+                        url=self._original_url,
+                        position_ms=effective_pos,
+                        duration_ms=effective_dur,
+                    )
+        except Exception:
+            pass
 
     def on_closing(self) -> None:
-        """Handle window closing event cleanly without freezing (§9.2 E)."""
+        """Handle window closing event cleanly without freezing or Not Responding (§9.2 E)."""
+        # 1. Instant UI Dismissal (0ms) - Hide window immediately so user feels instant response
+        # and Windows DWM never shows "(Not Responding)" ghost overlay.
+        try:
+            self.root.withdraw()
+        except Exception:
+            pass
+
         self._is_shutting_down = True
-        for tid_name in ("_ui_timer_id", "_maint_timer_id", "_clip_timer_id", "_seek_cleanup_timer_id"):
+
+        # 2. Cancel all pending UI and background timers immediately
+        try:
+            for timer_id in self.root.tk.call("after", "info"):
+                try:
+                    self.root.after_cancel(timer_id)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        for tid_name in ("_ui_timer_id", "_maint_timer_id", "_clip_timer_id", "_seek_cleanup_timer_id", "_network_retry_timer_id"):
             tid = getattr(self, tid_name, None)
             if tid is not None:
                 try:
@@ -1753,18 +1990,47 @@ class Application:
                 except Exception:
                     pass
                 setattr(self, tid_name, None)
+
+        # 3. Pre-emptively disconnect local StreamProxy sockets BEFORE stopping VLC.
+        # This breaks active TCP reads so VLC demuxer threads unblock and exit in < 5ms.
+        try:
+            from main.stream_proxy import StreamProxyServer
+            proxy = StreamProxyServer.get_instance()
+            proxy.close_active_connections()
+            proxy.stop_async()
+        except Exception:
+            pass
+
+        # 4. Immediately mute audio and detach VLC MediaPlayer from Win32 HWND.
+        # Prevents Direct3D 11 compositing swapchain collision when Tkinter frame is destroyed.
+        if self.player:
+            try:
+                self.player.audio_set_volume(0)
+                self.player.stop()
+                if sys.platform == "win32" and hasattr(self.player, "player"):
+                    self.player.player.set_hwnd(0)
+            except Exception:
+                pass
+
+        # 5. Persist playback position, PiP bounds, last URL, and audio settings
         self._save_current_position()
 
         # Save last PiP dimensions if closed during PiP mode
         if getattr(self.gui, "_is_pip", False):
-            w = getattr(self.gui, "_last_resized_pip_w", None) or self.gui.root.winfo_width()
-            h = getattr(self.gui, "_last_resized_pip_h", None) or self.gui.root.winfo_height()
-            self.gui._save_current_pip_size(w, h)
+            try:
+                w = getattr(self.gui, "_last_resized_pip_w", None) or self.gui.root.winfo_width()
+                h = getattr(self.gui, "_last_resized_pip_h", None) or self.gui.root.winfo_height()
+                self.gui._save_current_pip_size(w, h)
+            except Exception:
+                pass
 
         # Save last URL from entry or active URL (§Feature 1)
-        current_url = self.gui.url_entry.get().strip() or self._original_url
-        if current_url and self.persistence_policy.allow_content_state_write():
-            self.settings.set("playback", "last_url", current_url)
+        try:
+            current_url = self.gui.url_entry.get().strip() or self._original_url
+            if current_url and self.persistence_policy.allow_content_state_write():
+                self.settings.set("playback", "last_url", current_url)
+        except Exception:
+            pass
 
         # Save persistent audio volume and mute state
         if self.player:
@@ -1778,7 +2044,10 @@ class Application:
             except Exception:
                 pass
 
-        self.settings.save()
+        try:
+            self.settings.save()
+        except Exception:
+            pass
 
         # Save queue persistence if enabled
         if self.settings.get("playback", "queue_persist", default=False):
@@ -1787,53 +2056,65 @@ class Application:
             except Exception:
                 pass
 
-        if self.player:
-            self.player.release()
+        # 6. Offload libvlc_release to background daemon thread to never block UI thread
+        player_to_release = self.player
+        self.player = None
+        if player_to_release:
+            def _bg_vlc_teardown():
+                try:
+                    player_to_release.release()
+                except Exception:
+                    pass
+            threading.Thread(target=_bg_vlc_teardown, daemon=True, name="FBVW-VlcTeardown").start()
 
-        # Cancel active background downloader if running
+        # 7. Cancel active background downloader if running
         if hasattr(self, "_active_downloader") and self._active_downloader:
             try:
                 self._active_downloader.cancel()
             except Exception:
                 pass
 
-        # Shutdown worker threads
-        self.executor.shutdown(wait=False, cancel_futures=True)
-
-        # Shut down local stream proxy off the Tkinter thread.  Active proxy
-        # sockets are closed by StreamProxyServer.stop(), which lets paused
-        # Telegram handlers exit without freezing application shutdown.
+        # 8. Shutdown worker threads without blocking (daemon workers terminate with process)
         try:
-            from main.stream_proxy import StreamProxyServer
-            StreamProxyServer.get_instance().stop_async()
+            self.executor.shutdown(wait=False, cancel_futures=True)
         except Exception:
             pass
 
-        # Restore Windows multimedia timer resolution
+        # 9. Cleanly uninstall process-level Socket DNS Interceptor
+        try:
+            if hasattr(self, "network_manager") and self.network_manager:
+                self.network_manager.interceptor.uninstall()
+        except Exception:
+            pass
+
+        # 10. Restore Windows multimedia timer resolution
         try:
             from main.platform_utils import disable_high_precision_timer
             disable_high_precision_timer()
         except Exception:
             pass
 
-        # Dọn sạch file manifest HLS tạm trong %TEMP%/fbw_hls
+        # 11. Dọn sạch file manifest HLS tạm trong %TEMP%/fbw_hls
         try:
             from main.extractors.youtube import cleanup_hls_cache
             cleanup_hls_cache()
         except Exception:
             pass
 
-        # Dọn sạch file phụ đề tạm trong %TEMP%/fbw_subs (§16.4 Xài xong dọn)
+        # 12. Dọn sạch file phụ đề tạm trong %TEMP%/fbw_subs (§16.4 Xài xong dọn)
         try:
             from main.subtitle import TempSubtitleManager
             TempSubtitleManager.get_instance().cleanup_all()
         except Exception:
             pass
 
-        # Destroy GUI
+        # 13. Destroy GUI and root window
         if hasattr(self.gui, "destroy"):
             try:
                 self.gui.destroy()
             except Exception:
                 pass
-        self.root.destroy()
+        try:
+            self.root.destroy()
+        except Exception:
+            pass

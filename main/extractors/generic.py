@@ -218,19 +218,22 @@ class GenericExtractor(BaseExtractor):
             except Exception:
                 pass
 
-        # Check if stream is a rate-limited MP4 from CDNs that throttle single connections
-        # (e.g. Pornhub with 'rate=' or 'phncdn.com')
-        is_rate_limited = (
+        # Accelerate remote progressive MP4 streams via Multi-Connection StreamProxyServer
+        is_mp4_stream = (
             stream_url.startswith("http")
             and not stream_url.startswith("http://127.0.0.1:")
-            and (".mp4" in stream_url or "rate=" in stream_url)
-            and ("rate=" in stream_url or "phncdn.com" in stream_url)
+            and (
+                ".mp4" in stream_url.lower()
+                or (selected_v_fmt and selected_v_fmt.get("ext") == "mp4")
+                or "rate=" in stream_url
+            )
+            and not any(m in stream_url.lower() for m in (".m3u8", ".mpd"))
         )
-        if is_rate_limited:
+        if is_mp4_stream:
             from main.stream_proxy import StreamProxyServer
             referer_header = http_headers.get("Referer") if http_headers else None
             proxied_url = StreamProxyServer.get_instance().get_proxy_mp4_url(stream_url, referer=referer_header)
-            logger.info("Kích hoạt Multi-Connection StreamProxy tăng tốc luồng MP4 bị bóp băng thông")
+            logger.info("Kích hoạt Multi-Connection StreamProxy tăng tốc luồng MP4: %s", stream_url)
             stream_url = proxied_url
 
         title = info.get("title") or "Video"

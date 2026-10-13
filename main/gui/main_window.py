@@ -65,6 +65,8 @@ from main.gui.components import (
     OSDOverlay,
     PiPProgressOverlay,
     ListboxTooltip,
+    WidgetTooltip,
+    SkeletonOverlay,
 )
 from main.gui.menu_bar import ThemedMenuBar
 from main.gui.settings_dialog import SettingsDialog
@@ -222,6 +224,10 @@ class MainWindow:
             parent_root=self.root,
             height=3,
         )
+        # Initialize modern animated Skeleton loading screen
+        self.skeleton_overlay = SkeletonOverlay(
+            parent_widget=self.video_container,
+        )
         self.root.bind("<Configure>", self._on_window_configure, add="+")
 
         # Initialize native drag-and-drop for local media files
@@ -230,6 +236,21 @@ class MainWindow:
         # Listen to theme changes to dynamically re-style custom themed widgets (MenuBar, Menus)
         if hasattr(self.theme, "add_listener"):
             self.theme.add_listener(self._on_theme_changed)
+
+        def _on_root_destroyed(event=None):
+            if event is not None and getattr(event, "widget", None) != self.root:
+                return
+            self.destroy()
+
+        try:
+            self.root.tk.eval('proc bgerror {args} {}')
+        except Exception:
+            pass
+
+        try:
+            self.root.bind("<Destroy>", _on_root_destroyed, add="+")
+        except Exception:
+            pass
 
     def _on_theme_changed(self, theme_name: str, colors: Dict[str, str]) -> None:
         """Callback invoked when ThemeManager changes theme."""
@@ -243,7 +264,7 @@ class MainWindow:
                 self.pip_progress_overlay.reposition(self.root)
 
     def destroy(self) -> None:
-        """Cleanly release all pending timers, OSD overlay, and resources on shutdown."""
+        """Cleanly release all pending timers, overlays, devlog, hotkeys, and resources on shutdown."""
         # Cancel every after() timer that might still be pending to prevent
         # TclError "invalid command name" spam after root.destroy() is called.
         for attr in (
@@ -262,10 +283,55 @@ class MainWindow:
                     pass
                 setattr(self, attr, None)
 
-        if hasattr(self, "osd_overlay"):
-            self.osd_overlay.destroy()
-        if hasattr(self, "pip_progress_overlay"):
-            self.pip_progress_overlay.destroy()
+        if hasattr(self, "skeleton_overlay") and self.skeleton_overlay:
+            try:
+                self.skeleton_overlay.destroy()
+            except Exception:
+                pass
+        if hasattr(self, "osd_overlay") and self.osd_overlay:
+            try:
+                self.osd_overlay.destroy()
+            except Exception:
+                pass
+        if hasattr(self, "pip_progress_overlay") and self.pip_progress_overlay:
+            try:
+                self.pip_progress_overlay.destroy()
+            except Exception:
+                pass
+
+        if hasattr(self, "devlog_panel") and self.devlog_panel:
+            try:
+                self.devlog_panel.destroy()
+            except Exception:
+                pass
+        if hasattr(self, "_settings_dialog") and self._settings_dialog:
+            try:
+                if hasattr(self._settings_dialog, "top") and self._settings_dialog.top.winfo_exists():
+                    self._settings_dialog.top.destroy()
+            except Exception:
+                pass
+            self._settings_dialog = None
+        if hasattr(self, "hotkey_mgr") and self.hotkey_mgr:
+            try:
+                self.hotkey_mgr.unbind_all()
+            except Exception:
+                pass
+        if hasattr(self, "main_container") and self.main_container:
+            try:
+                if self.main_container.winfo_exists():
+                    self.main_container.destroy()
+            except Exception:
+                pass
+
+        # Cleanly cancel any pending Tcl timer on root to eliminate bgerror
+        try:
+            for timer_id in self.root.tk.call("after", "info"):
+                try:
+                    self.root.after_cancel(timer_id)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
         # Cleanly unbind hotkeys to prevent binding accumulation across instances
         for seq in list(getattr(self, "_bound_hotkey_sequences", set())):
@@ -917,6 +983,14 @@ class MainWindow:
         self.jump_entry.pack(side=tk.LEFT, padx=(0, 4))
         self.jump_entry.bind("<Return>", lambda e: self._on_jump_click())
         self.jump_entry.bind("<Escape>", lambda e: self.root.focus_set())
+        self.jump_entry.bind("<space>", self._on_jump_entry_space)
+        self.jump_entry.bind("<Shift-space>", self._on_jump_entry_space)
+
+        WidgetTooltip(
+            self.jump_entry,
+            "Nhập thời gian nhảy tới:\n• 1:30 hoặc 1 30 (Phút:Giây)\n• 01:15:30 hoặc 1 15 30 (Giờ:Phút:Giây)\n• 90s, 5m, 1h30m\n(Phím Space tự đổi thành dấu :)",
+            theme_mgr=getattr(self, "theme", None),
+        )
 
         btn_jump = ttk.Button(jump_frame, text="→ Nhảy", width=8, command=self._on_jump_click)
         btn_jump.pack(side=tk.LEFT, padx=(0, 12))
@@ -1729,6 +1803,51 @@ class MainWindow:
             except Exception as exc:
                 logger.error(f"Lỗi khi áp dụng Auto profile: {exc}")
 
+    def _on_jump_entry_space(self, event=None) -> Optional[str]:
+        """Khi người dùng nhấn phím Space trong ô jump_entry, tự động chuyển thành dấu ':' một cách thông minh."""
+        entry = self.jump_entry
+
+        # 1. Nếu có vùng chọn văn bản, xóa vùng chọn trước rồi mới xét vị trí con trỏ
+        if entry.selection_present():
+            try:
+                sel_first = entry.index(tk.SEL_FIRST)
+                sel_last = entry.index(tk.SEL_LAST)
+                entry.delete(sel_first, sel_last)
+                entry.icursor(sel_first)
+            except Exception:
+                pass
+
+        current_text = entry.get()
+        insert_pos = entry.index(tk.INSERT)
+
+        # 2. Không cho chèn ':' ở đầu ô nhập (vị trí 0)
+        if insert_pos == 0:
+            return "break"
+
+        prev_char = current_text[insert_pos - 1]
+
+        # 3. Nếu người dùng đang gõ đơn vị (ví dụ "1h ", "30m "), cho phép dấu cách bình thường
+        if prev_char in "hmsHMS":
+            return None
+
+        # 4. Chỉ tự động đổi thành ':' khi ký tự liền trước là chữ số (0-9)
+        if not prev_char.isdigit():
+            return "break"
+
+        # 5. Nếu ký tự ngay sau con trỏ đã là ':', dời con trỏ nhảy qua thay vì chèn trùng lặp
+        if insert_pos < len(current_text) and current_text[insert_pos] == ":":
+            entry.icursor(insert_pos + 1)
+            return "break"
+
+        # 6. Giới hạn tối đa 2 dấu ':' (định dạng tối đa hh:mm:ss)
+        if current_text.count(":") >= 2:
+            return "break"
+
+        # 7. Chèn ':' tại vị trí con trỏ và dịch con trỏ lên 1 nấc
+        entry.insert(insert_pos, ":")
+        entry.icursor(insert_pos + 1)
+        return "break"
+
     def _on_jump_click(self) -> None:
         val = self.jump_entry.get().strip()
         if not val:
@@ -1739,7 +1858,7 @@ class MainWindow:
             self.jump_entry.delete(0, tk.END)
             self.root.focus_set()
         except ValueError as err:
-            messagebox.showwarning("Thời gian không hợp lệ", f"Định dạng thời gian không đúng: {err}")
+            messagebox.showwarning("Thời gian không hợp lệ", str(err))
 
     def _on_add_to_queue_click(self) -> None:
         if self.on_add_to_queue:
@@ -2280,17 +2399,39 @@ class MainWindow:
         self.lbl_volume.configure(text=f"{new_vol}%")
         self.on_volume_change(new_vol)
 
-    # --- Display & State Updates ---
+    def show_skeleton_loading(self, text: str = "Đang tải siêu dữ liệu video...", detail: str = "") -> None:
+        """Show animated skeleton loading state on the video surface."""
+        if hasattr(self, "skeleton_overlay"):
+            self.skeleton_overlay.show(text, detail)
+        try:
+            if hasattr(self, "btn_play") and self.btn_play.winfo_exists():
+                self.btn_play.configure(state=tk.DISABLED)
+        except Exception:
+            pass
+
+    def hide_skeleton_loading(self) -> None:
+        """Hide animated skeleton loading state when playback starts."""
+        if hasattr(self, "skeleton_overlay"):
+            self.skeleton_overlay.hide()
+        try:
+            if hasattr(self, "btn_play") and self.btn_play.winfo_exists():
+                self.btn_play.configure(state=tk.NORMAL)
+        except Exception:
+            pass
 
     def set_loading(self, text: str = "Đang tải video Facebook...") -> None:
         """Show loading spinner/overlay on the video surface."""
         self.overlay_label.configure(text=text)
         self.overlay_label.lift()
         self.btn_play.configure(state=tk.DISABLED)
+        self.show_skeleton_loading(text)
 
     def hide_overlay(self) -> None:
         """Hide overlay to reveal playing video."""
         self.overlay_label.lower()
+        self.hide_skeleton_loading()
+        if hasattr(self, "osd_overlay") and getattr(self.osd_overlay, "_is_loading", False):
+            self.osd_overlay.hide()
         self.btn_play.configure(state=tk.NORMAL)
 
     def show_error(self, message: str) -> None:
@@ -3462,45 +3603,6 @@ class MainWindow:
             on_osd_message=self.show_osd_message,
         )
         self._settings_dialog.top.bind("<Destroy>", _on_dialog_destroy, add="+")
-
-    def destroy(self) -> None:
-        """Clean up MainWindow resources, devlog panel, hotkeys, and dialogs."""
-        if getattr(self, "_osd_timer", None) is not None:
-            try:
-                self.root.after_cancel(self._osd_timer)
-            except Exception:
-                pass
-            self._osd_timer = None
-        if getattr(self, "_clipboard_toast_timer", None) is not None:
-            try:
-                self.root.after_cancel(self._clipboard_toast_timer)
-            except Exception:
-                pass
-            self._clipboard_toast_timer = None
-        if hasattr(self, "devlog_panel") and self.devlog_panel:
-            try:
-                self.devlog_panel.destroy()
-            except Exception:
-                pass
-        if hasattr(self, "_settings_dialog") and self._settings_dialog:
-            try:
-                if hasattr(self._settings_dialog, "top") and self._settings_dialog.top.winfo_exists():
-                    self._settings_dialog.top.destroy()
-            except Exception:
-                pass
-            self._settings_dialog = None
-        if hasattr(self, "hotkey_mgr") and self.hotkey_mgr:
-            try:
-                self.hotkey_mgr.unbind_all()
-            except Exception:
-                pass
-        if hasattr(self, "main_container") and self.main_container:
-            try:
-                if self.main_container.winfo_exists():
-                    self.main_container.destroy()
-            except Exception:
-                pass
-
 
     def apply_theme(self) -> None:
         """Dynamically update themed widgets on theme change."""

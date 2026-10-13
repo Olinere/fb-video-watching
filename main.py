@@ -98,7 +98,6 @@ def main() -> None:
 
     app = Application(root, privacy_enabled=launch_request.privacy)
     root.deiconify()
-    apply_window_icon(root, ICON_FILE)
 
     # Listen for incoming requests from other instances via Named Pipe
     def _on_ipc_payload(payload: dict) -> None:

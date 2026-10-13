@@ -325,15 +325,17 @@ class TestQueueUiAndDevlogLayout(unittest.TestCase):
                 self.assertEqual(len(app.queue), 3)
                 self.assertEqual(app._active_queue_item.queue_id, item2.queue_id)
         finally:
-            if "app" in locals():
-                app._is_shutting_down = True
-                app.executor.shutdown(wait=False, cancel_futures=True)
-                if hasattr(app, "gui") and hasattr(app.gui, "destroy"):
+            if "app" in locals() and hasattr(app, "destroy"):
+                try:
+                    app.destroy()
+                except Exception:
+                    pass
+            try:
+                for t in app_root.tk.call("after", "info"):
                     try:
-                        app.gui.destroy()
+                        app_root.after_cancel(t)
                     except Exception:
                         pass
-            try:
                 app_root.destroy()
             except Exception:
                 pass

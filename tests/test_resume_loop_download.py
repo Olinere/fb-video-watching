@@ -60,8 +60,21 @@ class TestResumeLoopDownload(unittest.TestCase):
 
     def tearDown(self):
         try:
-            if hasattr(self, "gui") and getattr(self.gui, "_osd_timer", None):
-                self.root.after_cancel(self.gui._osd_timer)
+            if hasattr(self, "app") and self.app:
+                try:
+                    self.app.destroy()
+                except Exception:
+                    pass
+            if hasattr(self, "gui") and hasattr(self.gui, "destroy"):
+                try:
+                    self.gui.destroy()
+                except Exception:
+                    pass
+            for t in self.root.tk.call("after", "info"):
+                try:
+                    self.root.after_cancel(t)
+                except Exception:
+                    pass
             self.root.update_idletasks()
             self.root.destroy()
         except Exception:
@@ -94,13 +107,14 @@ class TestResumeLoopDownload(unittest.TestCase):
 
         with patch("main.app.VLCPlayer", return_value=mock_player):
             app = Application(self.root, settings_mgr=self.settings_mgr)
-            app.gui = self.gui
-            app._original_url = "https://www.facebook.com/watch/?v=999"
+            try:
+                app.gui = self.gui
+                app._original_url = "https://www.facebook.com/watch/?v=999"
 
-            app._perform_resume_seek("https://www.facebook.com/watch/?v=999", 45000, max_attempts=5)
-            mock_player.seek_to.assert_called_once_with(45000)
-            app._is_shutting_down = True
-            app.executor.shutdown(wait=False, cancel_futures=True)
+                app._perform_resume_seek("https://www.facebook.com/watch/?v=999", 45000, max_attempts=5)
+                mock_player.seek_to.assert_called_once_with(45000)
+            finally:
+                app.destroy()
 
     # --- Feature 2: Clipboard Auto-Detect Tests ---
 

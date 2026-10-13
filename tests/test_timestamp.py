@@ -52,6 +52,33 @@ class TestTimestampParser(unittest.TestCase):
         self.assertEqual(parse_timestamp("  1:30  "), 90_000)
         self.assertEqual(parse_timestamp("   1h30m45s   "), 5_445_000)
 
+    def test_space_separated_clock_formats(self):
+        """Test digital clock formats using spaces as separators."""
+        self.assertEqual(parse_timestamp("2 00 50"), 7_250_000)
+        self.assertEqual(parse_timestamp("1 30"), 90_000)
+        self.assertEqual(parse_timestamp("0 45"), 45_000)
+        self.assertEqual(parse_timestamp("  1   05   30  "), 3_930_000)
+        self.assertEqual(parse_timestamp("1 : 30"), 90_000)
+        self.assertEqual(parse_timestamp("2 : 00 : 50"), 7_250_000)
+
+    def test_invalid_repeated_colons_remain_rejected(self):
+        """Verify malformed colons are strictly rejected and raise ValueError."""
+        for item in ["1::30", "1:::30", "::", "1:  :30", "1: : 30"]:
+            with self.subTest(item=item):
+                with self.assertRaises(ValueError):
+                    parse_timestamp(item)
+
+    def test_error_message_contains_supported_formats(self):
+        """Verify ValueError message contains Vietnamese guide and supported formats."""
+        from main.timestamp import SUPPORTED_FORMATS_HELP, get_supported_formats_help
+        self.assertIn("Các định dạng thời gian được chấp nhận", SUPPORTED_FORMATS_HELP)
+        self.assertEqual(get_supported_formats_help(), SUPPORTED_FORMATS_HELP)
+        with self.assertRaises(ValueError) as ctx:
+            parse_timestamp("abc")
+        self.assertIn("Không đúng định dạng thời gian", str(ctx.exception))
+        self.assertIn("1:30", str(ctx.exception))
+        self.assertIn("2 00 50", str(ctx.exception))
+
     def test_invalid_formats(self):
         """Test invalid inputs that should raise ValueError."""
         invalid_inputs = [

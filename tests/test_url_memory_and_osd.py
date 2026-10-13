@@ -111,27 +111,38 @@ class TestUrlMemoryAndOSD(unittest.TestCase):
         app_root = tk.Tk()
         app_root.withdraw()
 
-        test_url = "https://www.facebook.com/reel/987654321"
-        self.settings.set("playback", "last_url", test_url)
+        try:
+            test_url = "https://www.facebook.com/reel/987654321"
+            self.settings.set("playback", "last_url", test_url)
 
-        with patch("main.app.SettingsManager", return_value=self.settings):
-            with patch("main.app.HistoryManager") as mock_hist_cls:
-                mock_hist = MagicMock()
-                mock_hist.get_history.return_value = []
-                mock_hist_cls.return_value = mock_hist
+            with patch("main.app.SettingsManager", return_value=self.settings):
+                with patch("main.app.HistoryManager") as mock_hist_cls:
+                    mock_hist = MagicMock()
+                    mock_hist.get_history.return_value = []
+                    mock_hist_cls.return_value = mock_hist
 
-                app = Application(app_root)
-                # Verify URL was restored into entry
-                self.assertEqual(app.gui.url_entry.get(), test_url)
+                    app = Application(app_root)
+                    # Verify URL was restored into entry
+                    self.assertEqual(app.gui.url_entry.get(), test_url)
 
-                # Change URL and trigger on_closing
-                new_url = "https://www.facebook.com/watch/?v=11223344"
-                app.gui.url_entry.delete(0, tk.END)
-                app.gui.url_entry.insert(0, new_url)
-                app.on_closing()
+                    # Change URL and trigger on_closing
+                    new_url = "https://www.facebook.com/watch/?v=11223344"
+                    app.gui.url_entry.delete(0, tk.END)
+                    app.gui.url_entry.insert(0, new_url)
+                    app.on_closing()
 
-                # Verify new URL was persisted in settings
-                self.assertEqual(self.settings.get("playback", "last_url"), new_url)
+                    # Verify new URL was persisted in settings
+                    self.assertEqual(self.settings.get("playback", "last_url"), new_url)
+        finally:
+            try:
+                for t in app_root.tk.call("after", "info"):
+                    try:
+                        app_root.after_cancel(t)
+                    except Exception:
+                        pass
+                app_root.destroy()
+            except Exception:
+                pass
 
     def test_osd_floating_overlay_synchronized(self):
         # Trigger seek overlay
@@ -382,6 +393,100 @@ class TestMemoryTrimmingAndSeekCleanup(unittest.TestCase):
         app.player.seek_relative.assert_called_once_with(10)
         app._schedule_post_seek_cleanup.assert_called_once()
 
+    def test_skeleton_overlay_lifecycle_and_animation(self):
+        """Verify SkeletonOverlay displays, animates shimmer, updates text, and dismisses cleanly."""
+        from main.gui.components import SkeletonOverlay
+        container = tk.Frame(self.root)
+        overlay = SkeletonOverlay(container)
+        self.assertFalse(overlay.is_active)
+
+        # Show skeleton loading
+        overlay.show("Đang tải siêu dữ liệu video...", "Kiểm tra luồng phát")
+        self.assertTrue(overlay.is_active)
+        self.assertIn("Đang tải siêu dữ liệu video", overlay.lbl_status.cget("text"))
+        self.assertEqual("Kiểm tra luồng phát", overlay.lbl_detail.cget("text"))
+
+        # Run animation tick
+        overlay._tick_anim()
+        self.assertIsNotNone(overlay._anim_timer)
+
+        # Update text dynamically
+        overlay.set_text("Đang nạp luồng phát", "StreamProxy đa luồng")
+        self.assertIn("Đang nạp luồng phát", overlay.lbl_status.cget("text"))
+        self.assertEqual("StreamProxy đa luồng", overlay.lbl_detail.cget("text"))
+
+        # Clean hide
+        overlay.hide()
+        self.assertFalse(overlay.is_active)
+        self.assertIsNone(overlay._anim_timer)
+
+        # Destroy
+        overlay.destroy()
+        container.destroy()
+
+    def test_osd_overlay_show_loading(self):
+        """Verify OSDOverlay.show_loading displays persistent badge and dismisses cleanly."""
+        from main.gui.components import OSDOverlay
+        container = tk.Frame(self.root)
+        osd = OSDOverlay(self.root, container)
+        osd.show_loading("⏳ Đang tải siêu dữ liệu video...")
+        self.assertTrue(osd._is_visible)
+        self.assertTrue(osd._is_loading)
+        self.assertIn("Đang tải siêu dữ liệu video", osd.label.cget("text"))
+        self.assertIsNone(osd._fade_timer)  # Persistent, no auto-fade
+
+        # Hide should reset loading state and withdraw
+        osd.hide()
+        self.assertFalse(osd._is_visible)
+        self.assertFalse(osd._is_loading)
+        osd.destroy()
+        container.destroy()
+
+    def test_vlc_player_is_opening_property(self):
+        """Verify VLCPlayer.is_opening returns True only when in State.Opening."""
+        from main.vlc_player import VLCPlayer
+        mock_player = MagicMock()
+        mock_vlc = MagicMock()
+        mock_vlc.State.Opening = "OpeningState"
+        mock_vlc.State.Playing = "PlayingState"
+
+        player = VLCPlayer.__new__(VLCPlayer)
+        player._vlc_module = mock_vlc
+        player.player = mock_player
+
+        mock_player.get_state.return_value = "OpeningState"
+        self.assertTrue(player.is_opening)
+
+        mock_player.get_state.return_value = "PlayingState"
+        self.assertFalse(player.is_opening)
+
+    def test_generic_extractor_mp4_acceleration(self):
+        """Verify GenericExtractor routes remote MP4 streams through StreamProxyServer."""
+        from main.extractors.generic import GenericExtractor
+        from unittest.mock import patch, MagicMock
+
+        ext = GenericExtractor()
+        with patch("yt_dlp.YoutubeDL") as mock_ydl_cls, \
+             patch("main.stream_proxy.StreamProxyServer.get_instance") as mock_proxy_inst:
+            mock_ydl = MagicMock()
+            mock_ydl_cls.return_value.__enter__.return_value = mock_ydl
+            mock_ydl.extract_info.return_value = {
+                "id": "direct_mp4",
+                "title": "Direct MP4 Video",
+                "url": "https://example.com/videos/test.mp4",
+                "formats": [
+                    {"format_id": "0", "url": "https://example.com/videos/test.mp4", "ext": "mp4", "vcodec": "avc1", "acodec": "mp4a"},
+                ],
+            }
+            mock_proxy = MagicMock()
+            mock_proxy_inst.return_value = mock_proxy
+            mock_proxy.get_proxy_mp4_url.return_value = "http://127.0.0.1:5000/stream.mp4?url=https%3A%2F%2Fexample.com%2Fvideos%2Ftest.mp4"
+
+            res = ext.extract("https://example.com/videos/test.mp4")
+            mock_proxy.get_proxy_mp4_url.assert_called_once()
+            self.assertIn("127.0.0.1:5000/stream.mp4", res.stream_url)
+
 
 if __name__ == "__main__":
     unittest.main()
+

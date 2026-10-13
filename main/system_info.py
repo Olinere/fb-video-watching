@@ -483,34 +483,13 @@ class SystemInfo:
             except Exception:
                 pass
 
-            # 2. Fallback: Query Win32_VideoController via PowerShell CIM if registry was empty
-            if not raw_gpus:
-                try:
-                    cmd = [
-                        "powershell",
-                        "-NoProfile",
-                        "-Command",
-                        "Get-CimInstance Win32_VideoController | Select-Object -Property Name, AdapterRAM | ConvertTo-Json",
-                    ]
-                    proc = subprocess.run(
-                        cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=2.5,
-                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                    )
-                    if proc.returncode == 0 and proc.stdout.strip():
-                        data = json.loads(proc.stdout)
-                        items = data if isinstance(data, list) else [data]
-                        for item in items:
-                            gpu_item_name = item.get("Name")
-                            if gpu_item_name:
-                                raw_gpus.append((gpu_item_name, item.get("AdapterRAM")))
-                except Exception:
-                    pass
-
-        # Query currently active hardware adapters from DirectX DXGI
+        # Query currently active hardware adapters from DirectX DXGI (< 5ms)
         active_dxgi = cls._query_active_dxgi_adapters()
+
+        # If registry fast-path yielded no GPUs, populate directly from active DXGI (< 5ms without PowerShell)
+        if not raw_gpus and active_dxgi:
+            for desc, _vendor_id, vram_bytes in active_dxgi:
+                raw_gpus.append((desc, vram_bytes if vram_bytes > 0 else None))
 
         # Parse and classify into GPUInfo objects
         cpu_has_igpu = cls._detect_cpu_igpu_capability(cpu_name)

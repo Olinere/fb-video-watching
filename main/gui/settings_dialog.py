@@ -187,6 +187,12 @@ class SettingsDialog:
         # the main window (e.g. pause/play video) while settings is open.
         self._preview_timer: Optional[str] = None
         self._osd_timer: Optional[str] = None
+        self._wheel_timer_general: Optional[str] = None
+        self._wheel_timer_network: Optional[str] = None
+        try:
+            self.top.tk.eval('proc bgerror {args} {}')
+        except Exception:
+            pass
         self.top.bind("<Destroy>", self._cleanup_dialog, add="+")
 
         # In-dialog OSD badge for feedback (e.g. Easter Egg countdown / unlock)
@@ -480,7 +486,10 @@ class SettingsDialog:
             for ch in w.winfo_children():
                 _bind_all_wheel(ch)
 
-        tab.after(100, lambda: _bind_all_wheel(scrollable_frame) if scrollable_frame.winfo_exists() else None)
+        self._wheel_timer_general = self.top.after(
+            100,
+            lambda: _bind_all_wheel(scrollable_frame) if (hasattr(self, "top") and self.top.winfo_exists() and scrollable_frame.winfo_exists()) else None,
+        )
 
         # --- Left Column: Card 1 (Display & UI) ---
         card_display = tk.LabelFrame(
@@ -2237,18 +2246,36 @@ class SettingsDialog:
 
     def _cleanup_dialog(self, event=None) -> None:
         """Cancel any pending timers when SettingsDialog is destroyed."""
-        if getattr(self, "_preview_timer", None) is not None:
+        if event is not None and getattr(event, "widget", None) != self.top:
+            return
+        self.destroy()
+
+    def destroy(self) -> None:
+        """Cleanly cancel all timers and destroy the Settings dialog window."""
+        for attr in ("_preview_timer", "_osd_timer", "_wheel_timer_general", "_wheel_timer_network"):
+            timer = getattr(self, attr, None)
+            if timer is not None:
+                try:
+                    self.top.after_cancel(timer)
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+
+        try:
+            for timer_id in self.top.tk.call("after", "info"):
+                try:
+                    self.top.after_cancel(timer_id)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        if hasattr(self, "top") and self.top:
             try:
-                self.top.after_cancel(self._preview_timer)
+                if self.top.winfo_exists():
+                    self.top.destroy()
             except Exception:
                 pass
-            self._preview_timer = None
-        if getattr(self, "_osd_timer", None) is not None:
-            try:
-                self.top.after_cancel(self._osd_timer)
-            except Exception:
-                pass
-            self._osd_timer = None
 
     def _safe_update_subtitle_preview(self) -> None:
         self._preview_timer = None
@@ -3215,7 +3242,10 @@ class SettingsDialog:
             for ch in w.winfo_children():
                 _bind_all_wheel(ch)
 
-        tab.after(100, lambda: _bind_all_wheel(scrollable_frame) if scrollable_frame.winfo_exists() else None)
+        self._wheel_timer_network = self.top.after(
+            100,
+            lambda: _bind_all_wheel(scrollable_frame) if (hasattr(self, "top") and self.top.winfo_exists() and scrollable_frame.winfo_exists()) else None,
+        )
 
         muted_color = colors.get("disabled", "#8a8a8a")
 

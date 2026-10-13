@@ -3,7 +3,7 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20(64--bit)-0078D6?logo=windows)](https://github.com/Olinere/fb-video-watching/releases)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-317%20Passed-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-373%20Passed-brightgreen)](tests/)
 [![RAM Usage](https://img.shields.io/badge/Memory-~40MB%20RAM-success)](#-1-hiệu-năng-siêu-nhẹ--smart-igpu-offload-gaming-mode)
 
 > Ứng dụng xem video desktop siêu nhẹ, tối ưu hóa phần cứng vượt trội với lõi VLC Media Player nhúng. Hỗ trợ phát đa nền tảng (Facebook, YouTube, TikTok, Douyin, Bilibili, Instagram, Twitter/X và link direct video), chế độ PiP 16:9 / 9:16 thông minh, tùy biến phím tắt linh hoạt và hệ thống phụ đề đa định dạng chuyên nghiệp với khung Live Preview trực quan.
@@ -125,14 +125,14 @@ Tất cả phím tắt dưới đây đều có thể tùy biến lại theo ý 
 
 ## 🧪 Kiểm thử tự động (Unit Tests)
 
-Dự án sở hữu bộ kiểm thử tự động toàn diện bao gồm **30 test files với 317 unit tests vượt qua 100%**:
+Dự án sở hữu bộ kiểm thử tự động toàn diện bao gồm **37 test files với 373 unit tests vượt qua 100%**:
 
 ```powershell
 .\.fbwenv\Scripts\python.exe -m unittest discover tests
 ```
 
 ```text
-Ran 317 tests in 55.117s
+Ran 373 tests in 177.793s
 OK
 ```
 
