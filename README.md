@@ -12,7 +12,7 @@
 
 ## 💡 Động cơ & Kiến trúc Cốt lõi (Core Architecture)
 
-Khác biệt với các ứng dụng Redesign VLC thông thường (vốn chỉ làm lại giao diện cho video offline có sẵn trong máy), **FB Video Watcher** được xây dựng trên một kiến trúc tích hợp sâu gồm 3 tầng:
+**FB Video Watcher** được xây dựng trên một kiến trúc tích hợp sâu gồm 3 tầng:
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -51,28 +51,11 @@ Khác biệt với các ứng dụng Redesign VLC thông thường (vốn chỉ 
 
 ---
 
-## 📊 Bảng so sánh tính năng (Comparison Matrix)
-
-| Tính năng | FB Video Watcher (FBVW) | Trình duyệt (Chrome / Edge) | VLC Media Player gốc | Các bản VLC Redesign khác |
-| :--- | :---: | :---: | :---: | :---: |
-| **Giao diện hiện đại (Fluent / Dark Mode)** | ✅ Có (Win 11 Fluent) | ⚠️ Giao diện web cồng kềnh | ❌ Cổ điển (Thập niên 2000) | ✅ Có |
-| **Mức chiếm dụng RAM khi xem video** | 🟢 **~40MB – 70MB** | 🔴 **1.5GB – 3.0GB+** | 🟡 ~120MB – 250MB | 🟡 ~150MB – 300MB |
-| **Mức chiếm dụng CPU** | 🟢 **~0.2% – 0.5%** | 🔴 5% – 25% | 🟢 ~0.5% – 1% | 🟢 ~0.5% – 2% |
-| **Phát file video có sẵn trong ổ cứng** | ✅ Mọi định dạng | ❌ Hạn chế codec | ✅ Mọi định dạng | ✅ Mọi định dạng |
-| **Xem online trực tiếp từ Facebook/YouTube** | ✅ **Paste link là phát ngay** | ✅ (Nhưng ngốn RAM) | ❌ Không hỗ trợ token/JS | ❌ Chỉ phát offline |
-| **Tự động bóc tách link từ bài viết/văn bản** | ✅ **SmartTextParser** | ❌ Không có | ❌ Không có | ❌ Không có |
-| **Smart iGPU Offload (Chơi game không lag)** | ✅ **Tự động nhận diện** | ❌ Ngốn chung GPU | ❌ Không có | ❌ Không có |
-| **Chế độ PiP ghi nhớ vị trí đa màn hình** | ✅ **16:9 & 9:16 độc lập** | ⚠️ PiP đơn giản | ⚠️ Cửa sổ nổi thô | ❌ Không linh hoạt |
-| **Hệ thống phụ đề AI thời gian thực** | ✅ **OpenAI API Standard** | ❌ Cần extension rời | ❌ Không có | ❌ Không có |
-| **Extension chuột phải gửi từ trình duyệt** | ✅ **Giao thức `fbvw://`** | ❌ Không có | ❌ Không có | ❌ Không có |
-
----
-
 ## 🚀 Tải về & Sử dụng nhanh (Khuyến nghị)
 
 Người dùng thông thường **không cần cài đặt Python** hay gõ lệnh. Chỉ cần tải bản `.exe` duy nhất:
 
-👉 **Tải bản cài đặt sẵn mới nhất tại: [GitHub Releases](https://github.com/Olinere/fb-video-watching/releases)**
+👉 **Tải bản cài đặt sẵn mới nhất tại: [Release](https://github.com/Olinere/fb-video-watching/releases)**
 
 - **Hệ điều hành:** Windows 10 / Windows 11 (64-bit).
 - **Khởi động:** Giải nén và mở `FB-Video-Watcher.exe`. Ứng dụng tích hợp sẵn Single Instance: click đúp nhiều lần chỉ kích hoạt đưa cửa sổ đang chạy lên trên cùng, không mở thừa tiến trình.
